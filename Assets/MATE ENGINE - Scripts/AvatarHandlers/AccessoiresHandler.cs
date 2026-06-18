@@ -39,7 +39,6 @@ public class AccessoiresHandler : MonoBehaviour
     void Start()
     {
         if (animator == null) animator = GetComponent<Animator>();
-        if (!SteamDRM.Initialized) SteamDRM.Initialize(steamAppId, ttlDays);
 
         foreach (var rule in rules)
         {
@@ -57,8 +56,6 @@ public class AccessoiresHandler : MonoBehaviour
             };
             trackingMap[rule] = tracking;
         }
-
-        StartCoroutine(ReinitLoop());
     }
 
     void Update()
@@ -70,8 +67,7 @@ public class AccessoiresHandler : MonoBehaviour
 
             bool shouldBeActive =
                 featureEnabled &&
-                rule.isEnabled &&
-                (!rule.steamExclusive || SteamDRM.IsEntitled);
+                rule.isEnabled;
 
             if (tracking.obj != null && tracking.lastActiveState != shouldBeActive)
             {
@@ -105,14 +101,4 @@ public class AccessoiresHandler : MonoBehaviour
         ActiveHandlers.Remove(this);
     }
 
-    IEnumerator ReinitLoop()
-    {
-        float t = 0f;
-        while (!SteamDRM.IsEntitled && t < maxWaitSeconds)
-        {
-            SteamDRM.TryInitLive(steamAppId, ttlDays);
-            yield return new WaitForSeconds(retrySeconds);
-            t += retrySeconds;
-        }
-    }
 }

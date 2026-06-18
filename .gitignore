@@ -7,17 +7,24 @@
 [Ll]ogs/
 [Mm]emoryCaptures/
 
+# User-specific Unity settings
+UserSettings/
+
 # AI Source
 Assets/StreamingAssets/undreamai-v1.2.4-llamacpp/
-Assets/StreamingAssets/qwen2.5-1.5b-instruct-q4_k_m.gguf
-Assets/StreamingAssets/Qwen3-1.7B-Q4_K_M.gguf
-Assets/StreamingAssets/Qwen3-4B-Q2_K.gguf
-Assets/StreamingAssets/Qwen3-4B-Q4_K_M.gguf
 Assets/StreamingAssets/undreamai-v1.2.5-llamacpp
+Assets/StreamingAssets/*.gguf
+Assets/StreamingAssets/LLMManager.json
+Assets/StreamingAssets/LLMManager.json.meta
 
 # Test Models
 Assets/MATE ENGINE - Test Station
 Assets/ExportedModel
+
+# Steam (已移除)
+steam_appid.txt
+Assets/Plugins/steam_api*
+Assets/Plugins/steam_appid*
 
 # Unity auto-generated files
 sysinfo.txt
@@ -37,9 +44,10 @@ sysinfo.txt
 *.pidb
 *.booproj
 
-# Rider and VS Code
+# IDE
 .idea/
 .vscode/
+.vs/
 *.code-workspace
 
 # Unity cache and packages
@@ -49,10 +57,12 @@ sysinfo.txt
 # Builds
 *.exe
 *.app
-*.apk
 *.x86
 *.x86_64
 *.aab
+
+# Burst debug (构建产物，不应提交)
+*_BurstDebugInformation_DoNotShip/
 
 # MacOS system files
 .DS_Store
@@ -71,7 +81,5 @@ Assets/AssetStoreTools*
 .collabignore
 .plastic/
 
-.vs
 Assets/Example Avatar - USED FOR MATE ENGINE
 ProjectSettings/Packages
-UserSettings/Layouts

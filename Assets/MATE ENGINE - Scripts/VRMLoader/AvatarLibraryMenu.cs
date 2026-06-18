@@ -81,12 +81,6 @@ public class AvatarLibraryMenu : MonoBehaviour
     {
         libraryPanel.SetActive(true);
 
-        var auto = FindFirstObjectByType<SteamWorkshopAutoLoader>();
-        if (auto != null)
-        {
-            auto.RefreshWorkshopAvatars();
-        }
-
         if (liveUpdateRoutine != null) StopCoroutine(liveUpdateRoutine);
         liveUpdateRoutine = StartCoroutine(LiveUpdateWhileOpen());
     }
@@ -99,18 +93,8 @@ public class AvatarLibraryMenu : MonoBehaviour
 
     private IEnumerator LiveUpdateWhileOpen()
     {
-        var auto = FindFirstObjectByType<SteamWorkshopAutoLoader>();
         while (libraryPanel != null && libraryPanel.activeInHierarchy)
         {
-            if (auto != null)
-            {
-                auto.RefreshWorkshopAvatars();
-                if (auto.hadChangesLastRun)
-                {
-                    ReloadAvatars();
-                }
-            }
-
             yield return new WaitForSeconds(liveUpdateInterval);
         }
     }
@@ -134,7 +118,6 @@ public class AvatarLibraryMenu : MonoBehaviour
 
         try
         {
-            string workshopDir = Path.GetFullPath(Path.Combine(Application.persistentDataPath, "Steam Workshop"));
             bool changed = false;
 
             foreach (var e in avatarEntries)
@@ -142,10 +125,9 @@ public class AvatarLibraryMenu : MonoBehaviour
                 if (!e.isOwner)
                 {
                     string full = string.IsNullOrEmpty(e.filePath) ? "" : Path.GetFullPath(e.filePath);
-                    bool isLocal = !string.IsNullOrEmpty(full) && File.Exists(full) &&
-                                   !full.StartsWith(workshopDir, StringComparison.OrdinalIgnoreCase);
+                    bool isLocal = !string.IsNullOrEmpty(full) && File.Exists(full);
 
-                    if (!e.isSteamWorkshop && e.steamFileId == 0 && isLocal)
+                    if (isLocal)
                     {
                         e.isOwner = true;
                         changed = true;
@@ -315,42 +297,8 @@ public class AvatarLibraryMenu : MonoBehaviour
         holdHandler.labelText = removeButton.GetComponentInChildren<TMP_Text>();
         holdHandler.audioSource = item.GetComponentInChildren<AudioSource>();
 
-        if (uploadButton != null) uploadButton.gameObject.SetActive(entry.isOwner);
+        if (uploadButton != null) uploadButton.gameObject.SetActive(false);
         if (uploadSlider != null) uploadSlider.gameObject.SetActive(false);
-        if (uploadButton != null && uploadButton.gameObject.activeSelf)
-        {
-            uploadButton.onClick.RemoveAllListeners();
-            uploadButton.onClick.AddListener(() =>
-            {
-                if (nsfwToggle != null)
-                    entry.isNSFW = nsfwToggle.isOn;
-
-                var match = avatarEntries.FirstOrDefault(e => e.filePath == entry.filePath);
-                if (match != null)
-                {
-                    match.isNSFW = entry.isNSFW;
-                    SaveAvatars();
-                    SteamWorkshopHandler.Instance.UploadToWorkshop(match, uploadSlider);
-                }
-            });
-
-            var handler = uploadButton.GetComponent<UploadButtonHoldHandler>();
-            if (handler != null)
-            {
-                var match = avatarEntries.FirstOrDefault(e => e.filePath == entry.filePath);
-                if (match != null)
-                    handler.entry = match;
-
-                handler.progressSlider = uploadSlider;
-                handler.labelText = uploadButton.GetComponentInChildren<TMP_Text>();
-            }
-        }
-
-
-        if (uploadSlider != null)
-        {
-            uploadSlider.gameObject.SetActive(false);
-        }
     }
 
 
@@ -446,19 +394,6 @@ public class AvatarLibraryMenu : MonoBehaviour
         catch { }
 
         entries = entries.Where(e => e.filePath != entryToRemove.filePath).ToList();
-
-        if (entryToRemove.isSteamWorkshop && File.Exists(entryToRemove.filePath))
-        {
-            try
-            {
-                File.Delete(entryToRemove.filePath);
-                Debug.Log("[AvatarLibraryMenu] Deleted Workshop model file: " + entryToRemove.filePath);
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning("[AvatarLibraryMenu] Could not delete Workshop model file: " + e.Message);
-            }
-        }
 
         if (File.Exists(entryToRemove.thumbnailPath))
         {

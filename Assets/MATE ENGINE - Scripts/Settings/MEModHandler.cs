@@ -8,8 +8,6 @@ using System.IO.Compression;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
-using Steamworks;
-
 public class MEModHandler : MonoBehaviour
 {
     public Button loadModButton;
@@ -438,36 +436,6 @@ public class MEModHandler : MonoBehaviour
             }
         }
 
-        var uploadBtn = FindChildByName<Button>(entry.transform, "Upload");
-        if (uploadBtn != null)
-        {
-            var up = uploadBtn.GetComponent<ModUploadButton>();
-            var progress = FindChildByName<Slider>(entry.transform, "Progress");
-            var hold = uploadBtn.GetComponent<ModUploadHoldHandler>();
-            if (hold != null && hold.previewImage == null) hold.previewImage = preview;
-
-            string existingThumb = GetThumbPath(mod.name);
-            if (up != null)
-            {
-                up.button = uploadBtn;
-                up.filePath = mod.localPath;
-                up.displayName = mod.name;
-                var a = mod.author.StartsWith("Author: ") ? mod.author.Substring(8) : mod.author;
-                up.author = string.Equals(a, "Unknown", StringComparison.OrdinalIgnoreCase) ? null : a;
-                up.isNSFW = false;
-                up.thumbnailPath = File.Exists(existingThumb) ? existingThumb : null;
-                up.progressBar = progress;
-            }
-            else
-            {
-                uploadBtn.onClick.AddListener(() =>
-                {
-                    var handler = FindFirstObjectByType<SteamWorkshopHandler>();
-                    if (handler != null) handler.BeginUploadMod(mod.localPath, progress);
-                });
-            }
-        }
-
         var removeBtn = FindChildByName<Button>(entry.transform, "Remove");
         if (removeBtn != null)
         {
@@ -476,7 +444,6 @@ public class MEModHandler : MonoBehaviour
             {
                 rm.button = removeBtn;
                 rm.filePath = mod.localPath;
-                rm.workshopId = ResolveWorkshopIdForPath(mod.localPath);
             }
             else
             {
@@ -486,34 +453,6 @@ public class MEModHandler : MonoBehaviour
                 });
             }
         }
-    }
-
-    ulong ResolveWorkshopIdForPath(string localPath)
-    {
-        try
-        {
-            if (!SteamManager.Initialized) return 0UL;
-            uint count = SteamUGC.GetNumSubscribedItems();
-            if (count == 0) return 0UL;
-
-            var ids = new Steamworks.PublishedFileId_t[count];
-            SteamUGC.GetSubscribedItems(ids, count);
-
-            string targetName = Path.GetFileName(localPath);
-            for (int i = 0; i < ids.Length; i++)
-            {
-                if (!SteamUGC.GetItemInstallInfo(ids[i], out ulong _, out string installPath, 1024, out uint _)) continue;
-                if (string.IsNullOrEmpty(installPath) || !Directory.Exists(installPath)) continue;
-                var top = Directory.GetFiles(installPath, "*", SearchOption.TopDirectoryOnly);
-                for (int f = 0; f < top.Length; f++)
-                {
-                    if (string.Equals(Path.GetFileName(top[f]), targetName, StringComparison.OrdinalIgnoreCase))
-                        return ids[i].m_PublishedFileId;
-                }
-            }
-        }
-        catch { }
-        return 0UL;
     }
 
     void PersistState(string name, bool a)
