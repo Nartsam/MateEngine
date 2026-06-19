@@ -10,6 +10,7 @@
 | ADR-0002 | 2026-06-18 | 自定义构建系统 | Accepted |
 | ADR-0003 | 2026-06-19 | 嵌入并 patch Addressables | Accepted |
 | ADR-0004 | 2026-06-19 | Unity 原生缓存重定向 | Accepted |
+| ADR-0005 | 2026-06-19 | 项目内自定义加载场景替代 Unity Splash | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -138,3 +139,32 @@
 - 崩溃或被任务管理器终止时，空目录残留到下次启动（由启动清理处理）。
 - Editor 模式不受影响（`#if !UNITY_EDITOR` 守卫）。
 - 如果未来 Unity 版本支持 boot.config 的 `cache-path` 键，已注入的行可直接生效。
+
+
+## ADR-0005: 项目内自定义加载场景替代 Unity Splash
+
+状态：Accepted
+
+背景：
+
+构建产物每次启动时，Unity 内置 Splash Screen 都会显示异常的破碎背景、黑色块和横向条纹。项目引用的 Splash 背景图 `DevICONBig.png` 本身正常，异常更像 Unity 启动早期 Splash 渲染/采样问题，而不是主场景或 URP 渲染问题。
+
+决策：
+
+- 关闭 Unity 内置 Splash Screen（`m_ShowUnitySplashScreen = 0`）。
+- 新增 `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity` 作为 Build 第一个场景。
+- 新增 `LoadingScreenController`，在加载场景内运行时创建 Canvas、背景图、Logo、中文“加载中...”文本和进度条。
+- 加载场景不依赖 Localization 或 Addressables，直接用序列化资源引用，避免首屏引入额外初始化路径。
+- `BuildScript.BuildWindows()` 和 `EditorBuildSettings.asset` 都按 `Loading -> Main` 顺序列出场景。
+
+原因：
+
+- 项目内加载页由普通 Unity 场景渲染，避开内置 Splash 的启动早期渲染异常。
+- 运行时创建 UI 可以减少手写 Unity 场景 YAML 的复杂度，同时仍保持首屏视觉完全可控。
+- 保留现有 Splash 图片资源，后续如需换品牌图只需改加载场景脚本引用或 UI 生成逻辑。
+
+后果：
+
+- Build 启动流程变为 `Mate Engine Loading.unity` 异步加载 `Mate Engine Main.unity`。
+- 如果新增或改名主场景，必须同步更新 `BuildScript.cs`、`EditorBuildSettings.asset` 和 `LoadingScreenController.mainScenePath`。
+- Unity Splash 设置保留旧 logo/background 引用但不再显示。

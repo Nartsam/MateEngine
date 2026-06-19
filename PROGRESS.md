@@ -19,6 +19,8 @@
 - 新增嵌入包 `Packages/com.unity.addressables/`，修复运行时默认访问 `Application.persistentDataPath`。
 - 新增 `Assets/boot.config` 作为文档标记；`BuildScript.CreateLaunchBatch()` 构建后生成 `MateEngine.bat` 以 `-cache-path` 启动。
 - 本地 Addressables group 已关闭 `Use Asset Bundle Cache`。
+- 启动完成后的菜单启动音效已禁用；默认 UI 语言已改为简体中文。
+- Unity 内置 Splash 已关闭；新增项目内加载场景作为首屏。
 
 ## 正在处理
 
@@ -40,7 +42,8 @@
 ### 构建脚本
 
 - 新增 `Assets/Editor/BuildScript.cs`。
-- 使用 `BuildScript.BuildWindows` 显式指定主场景：
+- 使用 `BuildScript.BuildWindows` 显式指定加载场景和主场景：
+  `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity`
   `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity`
 - 构建产物输出到 `Build/MateEngine.exe`。
 
@@ -61,6 +64,15 @@
 - **辅助 — 多点空目录清理**：构建开始/结束、编辑器退出、`BeforeSplashScreen`、`AfterSceneLoad`、`Application.quitting` 各节点删除空旧目录（非空不删）。
 - `Assets/boot.config` 中的 `cache-path` 行作为文档标记保留（Unity 6 是命令行参数，非 boot.config 键）。
 - 所有运行时写入（LLM、DiscordRPC、截图、缓存等）收敛到 `UserData/`；`--datadir` 等参数限制在 `UserData/` 子路径内；旧 `PlayerPrefs` 只读迁移。
+
+### 启动体验与默认语言
+
+- `MenuAudioHandler` 不再启动 `PlayStartupDelayed()`，启动完成后的菜单启动音效不会播放；保留 `startupSounds` 等序列化字段，避免破坏主场景、旧场景或 Voice Pack 引用。
+- `SettingsData.selectedLocaleCode` 新默认值改为 `zh`。
+- `LanguageDropdownHandler` 对空/非法语言代码优先回退到 `zh`，并同步写回设置。
+- `Localization Settings.asset` 的项目语言和启动兜底语言改为 `zh`，启动选择器保留命令行 `-language=`，移除系统语言优先选择，避免英文系统首次启动时覆盖简中默认。
+- 新增 `Mate Engine Loading.unity` 和 `LoadingScreenController`，运行时创建 Canvas 加载页并异步加载主场景。
+- `ProjectSettings` 已关闭 Unity 内置 Splash Screen，避免启动早期 Splash 渲染异常。
 
 ## 可选后续方向
 
@@ -87,3 +99,5 @@
 | 2026-06-18 | 外部写入静态审计 | 已完成 | 剩余命中为编辑器/移动端路径、旧数据只读迁移或用户主动功能 |
 | 2026-06-19 | 便携化代码改造 | 代码完成，待运行验证 | 含 Player.log、Addressables patch、cache-path 重定向、PowerShell 兜底清理 |
 | 2026-06-19 | LocalLow 空目录排查（多轮迭代） | 代码完成，待构建/运行复核 | 逐层定位到 Unity C++ 原生引擎 Cache 初始化 → 修复：`-cache-path` 命令行参数（主）+ 后台 PowerShell 清理（兜底） |
+| 2026-06-19 | 启动音效禁用与默认简中 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity 构建 |
+| 2026-06-19 | 自定义加载场景替代 Unity Splash | 静态验证完成，待 Unity 运行复核 | Unity Splash 已关闭；Build 场景顺序为 Loading -> Main |

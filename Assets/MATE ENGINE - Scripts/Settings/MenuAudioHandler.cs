@@ -12,7 +12,7 @@ public class MenuAudioHandler : MonoBehaviour
     [Range(0f, 10f)]
     public float disableDelay = 1f;
 
-    [Header("Startup Sounds (plays once on app start)")]
+    [Header("Startup Sounds (disabled in this fork)")]
     public List<AudioClip> startupSounds = new List<AudioClip>();
     public float startupPitchMin = 1f;
     public float startupPitchMax = 1f;
@@ -58,31 +58,13 @@ public class MenuAudioHandler : MonoBehaviour
     private HashSet<Slider> activeSliders = new HashSet<Slider>();
     private bool wasMenuOpenLastFrame = false;
     private float disableTimer = 0f;
-    private static bool s_startupPlayed;
 
     private void OnEnable()
     {
         SetupUIListeners();
         StartCoroutine(MenuMonitor());
-        StartCoroutine(PlayStartupDelayed());
-    }
-
-    private IEnumerator PlayStartupDelayed()
-    {
-        if (s_startupPlayed) yield break;
-        while (SaveLoadHandler.Instance == null || SaveLoadHandler.Instance.data == null) yield return null;
-        yield return new WaitForSecondsRealtime(startupDelaySeconds);
-        if (s_startupPlayed) yield break;
-        if (startupSounds == null || startupSounds.Count == 0) { s_startupPlayed = true; yield break; }
-        float volMul = 1f;
-        if (SaveLoadHandler.Instance != null) volMul = SaveLoadHandler.Instance.data.menuVolume;
-        float finalVol = startupVolume * volMul;
-        if (finalVol <= 0f) { s_startupPlayed = true; yield break; }
-        if (audioSource != null && !audioSource.gameObject.activeSelf) audioSource.gameObject.SetActive(true);
-        if (audioSource == null) { s_startupPlayed = true; yield break; }
-        audioSource.pitch = Random.Range(startupPitchMin, startupPitchMax);
-        audioSource.PlayOneShot(startupSounds[Random.Range(0, startupSounds.Count)], finalVol);
-        s_startupPlayed = true;
+        // Startup jingles are intentionally disabled for this fork. The serialized
+        // fields stay in place so existing scenes and voice packs remain compatible.
     }
 
     private IEnumerator MenuMonitor()

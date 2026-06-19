@@ -8,6 +8,9 @@ using UnityEngine;
 
 public static class BuildScript
 {
+    const string LoadingScenePath = "Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity";
+    const string MainScenePath = "Assets/MATE ENGINE - Scenes/Mate Engine Main.unity";
+
     [MenuItem("Build/Build Windows x64")]
     public static void BuildWindows()
     {
@@ -28,7 +31,7 @@ public static class BuildScript
 
             var options = new BuildPlayerOptions
             {
-                scenes = new[] { "Assets/MATE ENGINE - Scenes/Mate Engine Main.unity" },
+                scenes = new[] { LoadingScenePath, MainScenePath },
                 locationPathName = "Build/MateEngine.exe",
                 target = BuildTarget.StandaloneWindows64,
                 options = BuildOptions.None

@@ -24,12 +24,15 @@
 
 构建产物输出到 `Build/MateEngine.exe`。首次构建约 5-10 分钟（含资产导入），后续约 2-5 分钟。
 
-`BuildScript.BuildWindows` 会先重建 Addressables content，再构建 player，避免旧的 `catalog.bin` 沿用过时的本地 bundle 缓存配置。
+`BuildScript.BuildWindows` 会先重建 Addressables content，再构建 player，避免旧的 `catalog.bin` 沿用过时的本地 bundle 缓存配置。构建场景顺序固定为：
+
+1. `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity`
+2. `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity`
 
 ### 方式二：Unity 编辑器菜单构建
 
 1. Unity Hub 打开项目
-2. 打开场景 `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity`
+2. 打开场景 `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity`
 3. 菜单执行 `Build → Build Windows x64`
 
 如需直接使用 `File → Build Settings → Build`，先手动执行一次 `Window → Asset Management → Addressables → Groups → Build → New Build → Default Build Script`；否则 Player 可能继续带入旧的 Addressables catalog。
@@ -49,6 +52,7 @@
 - 首次打开项目时 Unity 会导入全部资产，耗时较长属正常现象
 - 构建脚本位于 `Assets/Editor/BuildScript.cs`
 - 构建脚本会先重建 Addressables content，再构建 Player；命令行构建和编辑器菜单 `Build → Build Windows x64` 走的是同一套流程
+- Unity 内置 Splash Screen 已关闭。启动首屏由 `Mate Engine Loading.unity` 提供，再异步进入主场景
 - 构建脚本会强制关闭 Unity Player Log；运行构建产物时不应生成 `%USERPROFILE%\AppData\LocalLow\Shinymoon\MateEngineX\Player.log`
 - MateEngine 自身的构建期初始化数据写入项目内 `Library/MateEngineUserData/`，不应在 `%USERPROFILE%\AppData\LocalLow\Shinymoon\` 下创建空目录
 - Addressables 使用项目内嵌入包 `Packages/com.unity.addressables/`；运行时 Localization/Addressables 初始化不应再访问 `Application.persistentDataPath`，本地 bundle 也不应再因为缓存查询创建 `%USERPROFILE%\AppData\LocalLow\Shinymoon\MateEngineX\` 空目录

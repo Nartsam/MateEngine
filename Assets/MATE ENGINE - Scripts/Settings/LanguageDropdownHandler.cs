@@ -5,6 +5,8 @@ using System.Collections.Generic;
 
 public class LanguageDropdownHandler : MonoBehaviour
 {
+    private const string DefaultLocaleCode = "zh";
+
     [Tooltip("Add all TMP_Dropdowns that should reflect the selected language")]
     [SerializeField] private List<TMP_Dropdown> languageDropdowns = new List<TMP_Dropdown>();
 
@@ -14,7 +16,9 @@ public class LanguageDropdownHandler : MonoBehaviour
     {
         var locales = LocalizationSettings.AvailableLocales.Locales;
         string savedCode = SaveLoadHandler.Instance.data.selectedLocaleCode;
+        if (string.IsNullOrEmpty(savedCode)) savedCode = DefaultLocaleCode;
         int index = locales.FindIndex(locale => locale.Identifier.Code == savedCode);
+        if (index < 0) index = locales.FindIndex(locale => locale.Identifier.Code == DefaultLocaleCode);
         if (index < 0) index = 0;
 
         // Set value without triggering
@@ -28,6 +32,12 @@ public class LanguageDropdownHandler : MonoBehaviour
         }
 
         LocalizationSettings.SelectedLocale = locales[index];
+        string selectedCode = locales[index].Identifier.Code;
+        if (SaveLoadHandler.Instance.data.selectedLocaleCode != selectedCode)
+        {
+            SaveLoadHandler.Instance.data.selectedLocaleCode = selectedCode;
+            SaveLoadHandler.Instance.SaveToDisk();
+        }
         isInitializing = false;
     }
 

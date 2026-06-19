@@ -151,7 +151,7 @@ public class SaveLoadHandler : MonoBehaviour
 
         public bool tutorialDone = false;
 
-        public string selectedLocaleCode = "en";
+        public string selectedLocaleCode = "zh";
         public bool enableIK = true;
 
         public int bigScreenScreenSaverTimeoutIndex = 0;
@@ -222,15 +222,19 @@ public class SaveLoadHandler : MonoBehaviour
     //ALARM
     void MigrateAfterLoad()
     {
+        if (data == null) data = new SettingsData();
+        bool changed = false;
+
         if (data.timers == null) data.timers = new List<SettingsData.TimerEntry>();
         if (string.IsNullOrEmpty(data.selectedParticleTheme)) data.selectedParticleTheme = "Standard";
-        if (data == null) data = new SettingsData();
+        if (string.IsNullOrEmpty(data.selectedLocaleCode)) { data.selectedLocaleCode = "zh"; changed = true; }
         if (data.alarms == null) data.alarms = new List<SettingsData.AlarmEntry>();
         if (data.settingsVersion < 1)
         {
             data.settingsVersion = 1;
-            SaveToDisk();
+            changed = true;
         }
+        if (changed) SaveToDisk();
     }
 
     public static void SyncAllowedAppsToAllAvatars()
