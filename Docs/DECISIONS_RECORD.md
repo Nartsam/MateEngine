@@ -12,6 +12,7 @@
 | ADR-0004 | 2026-06-19 | Unity 原生缓存重定向 | Accepted |
 | ADR-0005 | 2026-06-19 | 项目内自定义加载场景替代 Unity Splash | Accepted |
 | ADR-0006 | 2026-06-19 | Git 换行与二进制属性策略 | Accepted |
+| ADR-0007 | 2026-06-20 | 设置菜单滚动区域运行时高度适配 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -197,3 +198,71 @@
 - 后续新增 Unity 文本资产默认按 LF 入库。
 - 已经存在的历史文件不会自动重写；如需完全规范化，必须单独执行一次受控的 renormalize 提交。
 - 开发者仍应在打开 Unity 或构建后检查 `git status`，只提交任务相关文件。
+
+
+## ADR-0007: 设置菜单滚动区域运行时高度适配
+
+状态：Accepted
+
+背景：
+
+设置菜单滚动区 Content 下仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Main Menu" 是普通 Transform（`!u!4`，非 RectTransform）**——所有设置条目（= GENERAL、= AUDIO、= AI、= DEBUG 等）均作为 "Main Menu" 下的绝对定位 RectTransform 子元素排列。
+
+Unity 的 VerticalLayoutGroup（VLG）和 ContentSizeFitter（CSF）**完全不识别**普通 Transform 及其子元素。开发者使用巨大的 VLG `m_Bottom`（Main: 4600, Update: 5000）人为撑高 Content，使绝对定位条目有足够的显示空间。
+
+移除 3 块推广 section（= STEAM DLC、= MINECRAFT、= FOOD SYSTEM）后，运行时 VLG 首选高度（Top + MenuPanel + Bottom = 340 + 60 + 4600 = 5000）比实际内容底部（~3913）多出约 1000px 的可滚动空白。
+
+决策：
+
+- 新增 `SettingsMenuScrollBoundsLimiter`，挂载于 `SettingsMenuCanvas`。
+- 场景保持 VLG Bottom 原始值（4600/5000）和 CSF PreferredSize（`m_VerticalFit: 2`）不变。
+- `Apply()` 在 OnEnable（及下一帧复核）时：
+  1. `Canvas.ForceUpdateCanvases()` 确保布局最新
+  2. 通过 `bottomElement.GetWorldCorners()` 获取最底部元素（Delete AI History）的世界坐标
+  3. 转换为 Content 局部空间，得到 Content 所需高度 `height = -minY + bottomPadding`
+  4. 计算新 VLG Bottom：`newBottom = height - padding.top - sum(active RectTransform children heights)`
+  5. 设置 `vlg.padding.bottom = newBottom`
+  6. 再次 `Canvas.ForceUpdateCanvases()` → CSF PreferredSize 自然将 Content 设为正确高度
+  7. 设置 `scrollRect.movementType = Clamped`、`verticalNormalizedPosition = 1f`
+- Content 的 `m_SizeDelta.y` 和 ScrollRect 的 `m_MovementType` 场景值被运行时覆盖，不作为配置依据。
+
+原因：
+
+- 调整 VLG padding 走标准布局管线，CSF 自然适配——不与布局系统对抗。
+- 之前尝试的 3 种错误方案及其教训记录在 `PROGRESS.md` 的"错误提醒"节：
+  1. VLG Bottom=0 + CSF PreferredSize → Content 被压缩到 ~400px
+  2. VLG Bottom=0 + CSF Unconstrained → VLG 拉伸 MenuPanel 致布局偏移
+  3. SetSizeWithCurrentAnchors + 禁用 CSF → 锚点/pivot 偏移致顶部截断
+
+后果：
+
+- 广告区移除后滚动区自动适配，无多余空白。
+- Limiter 的 `bottomElement` 引用指向 Delete AI History（当前最底部元素）。
+
+### 在滚动区域添加新内容的操作指南
+
+**情况 A：新内容加在 `bottomElement` 上方**（在现有 section 之间插入）
+
+1. 在场景中将新 GameObject 作为 "Main Menu"（普通 Transform）的子元素
+2. 设置 AnchoredPosition.y 使其位于正确位置
+3. 将下方所有 section 的 AnchoredPosition.y 向下推移以腾出空间
+4. **Limiter 无需任何修改**——`bottomElement` 仍是 Delete AI History，其世界坐标随上方推移自动下移，Limiter 自动重新计算 Content 高度
+
+**情况 B：新内容加在 `bottomElement` 下方**（新内容成为新的最底部）
+
+1. 同上添加新 GameObject
+2. **更新 Limiter 的 `bottomElement` 引用**，指向新的最底部元素的 RectTransform
+3. Limiter 代码无需改动
+
+**情况 C：在 Content 下直接添加新的 RectTransform 子元素**（VLG 可见的孩子）
+
+1. Limiter 的 `activeChildHeight` 计算会自动包含新孩子
+2. VLG Bottom 计算自动调整
+3. CSF 自动适配
+4. **无需任何 Limiter 修改**
+
+### 相关文件
+
+- `Assets/MATE ENGINE - Scripts/Settings/SettingsMenuScrollBoundsLimiter.cs`
+- `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity`（Content、VLG、CSF、ScrollRect 组件）
+- `Assets/MATE ENGINE - Scenes/Mate Engine Update.unity`（同上结构，但 Update 场景未挂载 Limiter）

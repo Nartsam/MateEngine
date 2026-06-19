@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-20（设置菜单调试区运行时裁剪兜底）
+- 上次更新：2026-06-20（清理设置菜单滚动修复冗余变更 + 新增 ADR-0007）
 
 ## 当前状态
 
@@ -26,7 +26,7 @@
 - 已补齐嵌入 Addressables 包中被旧 `.gitignore` 误忽略的 `Build` 子目录源码；`.gitignore` 的 Unity 生成目录规则已限制为仓库根目录。
 - 托盘右键菜单已全部汉化为简体中文。
 - 设置面板 X 按钮改为隐藏窗口到托盘（不再退出）；双击托盘图标恢复窗口；只有右键菜单"退出"才真正退出。
-- 设置面板主滚动列表打开时会按 `= DEBUG` 底部按钮重新裁剪 Content 高度，并强制夹住 ScrollRect，避免被移除推广区在运行时留下可滚动空白。
+- 设置面板主滚动列表通过 `SettingsMenuScrollBoundsLimiter` 在运行时动态适配实际内容高度：测量最底部元素（Delete AI History）→ 调整 VLG `padding.bottom` → CSF PreferredSize 自然适配 Content 高度 → 强制 Clamped + 滚回顶部。无需手动调整 Content SizeDelta 或禁用 CSF。
 
 ## 正在处理
 
@@ -124,6 +124,33 @@
 | 外部写入审计 | 静态已完成，待运行复核 | 需运行构建产物后确认磁盘和注册表实际行为 |
 | 开机自启动写注册表 | 已知例外 | 用户主动启用/关闭时写入或删除 `HKCU\...\Run` |
 
+## 错误提醒
+
+以下为近期设置菜单滚动区修复中经过的 3 轮错误尝试，留作警示。
+
+### 设置菜单布局的特殊约束
+
+Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Main Menu" 是普通 Transform（非 RectTransform）**，所有设置条目（= GENERAL、= AI、= DEBUG 等）均为 "Main Menu" 下的绝对定位 RectTransform 子元素。VLG 和 CSF **完全看不见** "Main Menu" 及其子元素——开发者用巨大的 VLG `m_Bottom`（4600）人为撑高 Content，使绝对定位条目有足够空间显示。
+
+### 错误 1：VLG Bottom 设为 0 + CSF PreferredSize
+
+- **现象**：Content 被压缩到 ~400px（VLG 首选高度 = 340 + 60 + 0），仅显示顶部少量内容，大部分条目不可见
+- **教训**：VLG Bottom=0 切断了绝对定位条目唯一的空间来源
+
+### 错误 2：VLG Bottom 设为 0 + CSF Unconstrained
+
+- **现象**：VLG 可用空间巨大（3948 - 340 - 0 = 3608），ChildForceExpandHeight 将 MenuPanel 从 60px 拉伸到 3608px → 其下"Main Menu"及其绝对定位子元素全部向下偏移 → 部分内容偏移到 Content 范围之外不可见
+- **教训**：禁用 CSF 后 VLG 的 ChildForceExpandHeight 会按可用空间拉伸孩子，破坏绝对定位布局
+
+### 错误 3：SetSizeWithCurrentAnchors 裁剪 Content + 禁用 CSF
+
+- **现象**：底部显示正常，但顶部缺失（标题、按钮图标不可见）。`verticalNormalizedPosition = 1f` 无法修复
+- **教训**：`SetSizeWithCurrentAnchors` 绕过布局系统直接修改 Content 尺寸，与锚点/pivot 系统产生非预期偏移。**不应与布局系统对抗，而应与之协同**——调整 VLG 参数让 CSF 自然产生正确结果
+
+### 正确做法
+
+运行时调整 VLG `padding.bottom` → Canvas.ForceUpdateCanvases() → CSF PreferredSize 读取新的 VLG 首选高度 → 自然设置 Content 高度。整个过程走标准布局管线，无任何副作用。
+
 ## 验证记录
 
 | 日期 | 验证项 | 结果 | 备注 |
@@ -142,4 +169,4 @@
 | 2026-06-19 | X 按钮隐藏前关闭设置面板 | 代码完成，待运行复核 | 根因：原先按子面板名（Debugging/Main Menu）查找，子面板可能 inactive 且名称不唯一，`GameObject.Find` 时灵时不灵；改为关闭唯一且必为 active 的根容器 `SettingsMenuCanvas` |
 | 2026-06-19 | 双击恢复时设置菜单闪烁修复 | 代码完成，待运行复核 | 渲染时序差：关面板后用协程放行一帧（`yield null` + `WaitForEndOfFrame`）再隐藏窗口，避免窗口前缓冲区定格在带菜单旧帧 |
 | 2026-06-20 | 移除 Discord / 设置菜单广告 / DLC 模型 | 静态复核完成，待运行复核 | 场景屏蔽 Discord 三对象 + 3 块推广 section（STEAM DLC/MINECRAFT/FOOD SYSTEM）；保留并收紧 `Image (11)` 作为 DEBUG 背景，仅屏蔽推广背景 `Image (12)`~`Image (14)`；ScrollRect 内容高度止于调试按钮底边，并改为 Clamped 防止底部弹性越界空白；清空 `AvatarLibraryMenu.dlcAvatars`，模型选项仅留 Built-in 与用户导入 VRM |
-| 2026-06-20 | 设置菜单调试区底部空白复查 | 代码完成，待构建/运行复核 | 用户命令行重建后仍复现，确认主场景 BuildSettings 正确，追加 `SettingsMenuScrollBoundsLimiter` 在打开 `SettingsMenuCanvas` 时基于 `Delete AI History` 实际底边重新裁剪主设置 Content，并强制 Clamped |
+| 2026-06-20 | 修复设置菜单滚动区空白（SettingsMenuScrollBoundsLimiter） | 代码完成，待构建/运行复核 | 根因：广告区移除后 VLG Bottom 4600 被 CSF PreferredSize 撑出 ~1000px 空白。最终方案：Limiter 运行时调整 VLG `padding.bottom` → CSF 自然适配 Content 高度。详见 `Docs/DECISIONS_RECORD.md` ADR-0007。 |
