@@ -17,6 +17,7 @@ namespace Utils
         private static Dictionary<string, Action> MenuActions;
         private static Dictionary<uint, string> ActionMappings;
         private static Action OnLeftClick;
+        public static Action OnDoubleClick;
 
         private static WndProcDelegate wndProcDelegate;
         public static Func<List<(string, Action)>> OnBuildMenu;
@@ -210,6 +211,10 @@ namespace Utils
                     {
                         case WM_LBUTTONUP:  // Left Click Tray Icon
                             OnLeftClick?.Invoke();
+                            break;
+
+                        case WM_LBUTTONDBLCLK:
+                            OnDoubleClick?.Invoke();
                             break;
 
                         case WM_RBUTTONUP:  // Right Click Tray Icon

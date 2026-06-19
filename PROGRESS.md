@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-19
+- 上次更新：2026-06-19（X 按钮隐藏前关闭设置面板）
 
 ## 当前状态
 
@@ -24,6 +24,8 @@
 - 右键径向菜单打开后固定在展开瞬间的位置；Chibi/大头缩身功能已屏蔽。
 - 新增 `.gitattributes`，固定 Unity 文本资产和源码使用 LF，降低 Windows 构建/打开 Unity 后的假脏状态。
 - 已补齐嵌入 Addressables 包中被旧 `.gitignore` 误忽略的 `Build` 子目录源码；`.gitignore` 的 Unity 生成目录规则已限制为仓库根目录。
+- 托盘右键菜单已全部汉化为简体中文。
+- 设置面板 X 按钮改为隐藏窗口到托盘（不再退出）；双击托盘图标恢复窗口；只有右键菜单"退出"才真正退出。
 
 ## 正在处理
 
@@ -85,6 +87,15 @@
 - 主场景中的 `Chibi` 径向菜单按钮已设为 inactive；`UISetOnOff.ToggleChibiMode()` 和 `ChibiToggle.ToggleChibiMode()` 保留兼容入口但不再执行大头缩身变形。
 - `CircleSelector` 已将 inactive 源按钮排除在运行时圆环按钮列表之外，避免隐藏 Chibi 按钮后选择扇区和可点击按钮错位。
 
+### 托盘菜单汉化与隐藏到托盘
+
+- 托盘右键菜单所有英文标签改为简体中文：场景中 14 个序列化 `TrayAction.label` 和代码中 2 个硬编码字符串。
+- 设置面板 X 按钮（`UISetOnOff.CloseApp()`）从 `Application.Quit()` 改为 `RemoveTaskbarApp.HideMainWindow()`，点击后隐藏程序窗口，只保留托盘图标。
+- `RemoveTaskbarApp` 新增 `HideMainWindow()`/`ShowMainWindow()` 静态方法，使用 `ShowWindow` Win32 API 控制窗口可见性。
+- `TrayIcon` 新增 `WM_LBUTTONDBLCLK` 处理和 `OnDoubleClick` 回调；`SystemTray.Awake()` 注册双击回调调用 `ShowMainWindow()`。
+- 只有托盘右键菜单中的"退出"项调用 `Application.Quit()` 真正退出程序。
+- `UISetOnOff.CloseApp()` 在隐藏窗口前先调用 `CloseSettingsPanel()`：通过 `GameObject.Find("SettingsMenuCanvas")` 定位设置面板根容器并 `SetActive(false)`，确保双击托盘恢复后只显示角色、无残留设置菜单。`SettingsMenuCanvas` 是面板显隐单位（默认 inactive，打开入口即 `SetOnOff(SettingsMenuCanvas)`），名称全场景唯一；点 X 时面板可见即该容器必然 active，故 `GameObject.Find` 可靠命中。不再依赖可能 inactive、名称不唯一的子面板对象（Debugging / Main Menu / FooterToggles）。
+
 ## 可选后续方向
 
 - 程序化空闲动作：自主张望、自主踱步、随机兴趣点。
@@ -116,3 +127,5 @@
 | 2026-06-19 | `.gitattributes` 换行策略 | 静态验证完成 | Unity 文本资产和源码固定为 LF；二进制资源标记为 binary |
 | 2026-06-19 | 径向菜单隐藏 Chibi 后点击失效修复 | 静态验证完成，待 Unity 运行复核 | inactive 源按钮不再参与 `CircleSelector` 的按钮实例和命中计算 |
 | 2026-06-19 | Addressables 嵌入包缺失 `Build` 目录修复 | Unity 批处理编译检查通过 | 补齐 `Packages/com.unity.addressables/Editor/Build` 与 `Tests/Editor/Build`；原 `CS0234/CS0246` 不再出现 |
+| 2026-06-19 | 托盘菜单汉化与隐藏到托盘 | 代码完成，待构建/运行复核 | 托盘右键菜单全部中文；X 按钮隐藏窗口；双击托盘恢复；退出仅限右键菜单 |
+| 2026-06-19 | X 按钮隐藏前关闭设置面板 | 代码完成，待运行复核 | 根因：原先按子面板名（Debugging/Main Menu）查找，子面板可能 inactive 且名称不唯一，`GameObject.Find` 时灵时不灵；改为关闭唯一且必为 active 的根容器 `SettingsMenuCanvas` |

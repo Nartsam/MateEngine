@@ -21,6 +21,7 @@ namespace Utils
         private const uint TRAY_ICON_MESSAGE = WM_APP + 1;
 
         private const uint WM_LBUTTONUP = 0x0202;
+        private const uint WM_LBUTTONDBLCLK = 0x0203;
         private const uint WM_RBUTTONUP = 0x0205;
 
         private static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);

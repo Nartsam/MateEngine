@@ -21,6 +21,8 @@ public class RemoveTaskbarApp : MonoBehaviour
 
     const int GWL_EXSTYLE = -20;
     const int WS_EX_TOOLWINDOW = 0x00000080;
+    const int SW_HIDE = 0;
+    const int SW_SHOW = 5;
     const int SW_RESTORE = 9;
 
     private static IntPtr unityHWND = IntPtr.Zero;
@@ -65,7 +67,30 @@ public class RemoveTaskbarApp : MonoBehaviour
 #endif
     }
 
-    private IntPtr GetUnityWindow()
+    public static void HideMainWindow()
+    {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        if (unityHWND == IntPtr.Zero)
+            unityHWND = GetUnityWindow();
+        if (unityHWND != IntPtr.Zero)
+            ShowWindow(unityHWND, SW_HIDE);
+#endif
+    }
+
+    public static void ShowMainWindow()
+    {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        if (unityHWND == IntPtr.Zero)
+            unityHWND = GetUnityWindow();
+        if (unityHWND != IntPtr.Zero)
+        {
+            ShowWindow(unityHWND, SW_SHOW);
+            SetForegroundWindow(unityHWND);
+        }
+#endif
+    }
+
+    private static IntPtr GetUnityWindow()
     {
         string title = Application.productName;
         IntPtr hwnd = FindWindow(null, title);

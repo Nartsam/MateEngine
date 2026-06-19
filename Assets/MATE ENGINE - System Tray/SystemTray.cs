@@ -26,6 +26,7 @@ public class SystemTray : MonoBehaviour
     void Awake()
     {
         TrayIcon.OnBuildMenu = BuildMenu;
+        TrayIcon.OnDoubleClick = () => RemoveTaskbarApp.ShowMainWindow();
         TrayIcon.Init("App", iconName, icon, BuildMenu());
     }
 
@@ -47,14 +48,14 @@ public class SystemTray : MonoBehaviour
         }
         var app = FindObjectOfType<RemoveTaskbarApp>();
         bool hidden = app != null && app.IsHidden;
-        string toggleLabel = hidden ? "✖ Show App in Taskbar" : "✔ Hide App from Taskbar";
+        string toggleLabel = hidden ? "✖ 在任务栏中显示" : "✔ 从任务栏中隐藏";
         context.Add((toggleLabel, () =>
         {
             if (app != null) app.ToggleAppMode();
         }
         ));
 
-        context.Add(("Quit MateEngine", QuitApp));
+        context.Add(("退出", QuitApp));
         return context;
     }
 
