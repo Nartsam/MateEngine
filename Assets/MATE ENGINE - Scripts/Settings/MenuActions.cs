@@ -104,17 +104,6 @@ public class MenuActions : MonoBehaviour
         bool keyDown = Input.GetKeyDown(radialMenuKey);
         if (!keyDown)
         {
-            if (followBone && IsRadialOpen() && radialRect != null && currentAnimator != null)
-            {
-                var bone = currentAnimator.GetBoneTransform(targetBone);
-                if (bone != null)
-                {
-                    Vector3 targetScreenPos = mainCam.WorldToScreenPoint(bone.position);
-                    screenPosition = Vector3.Lerp(screenPosition, targetScreenPos, 1f - followSmoothness);
-                    if (RectTransformUtility.ScreenPointToWorldPointInRectangle(radialRect.parent as RectTransform, screenPosition, mainCam, out Vector3 worldPos))
-                        radialRect.position = worldPos;
-                }
-            }
             return;
         }
 

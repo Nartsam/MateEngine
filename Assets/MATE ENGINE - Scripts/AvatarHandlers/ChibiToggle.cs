@@ -24,6 +24,7 @@ public class ChibiToggle : MonoBehaviour
     private Transform leftUpperLeg, rightUpperLeg;
 
     private bool isChibi = false;
+    private bool chibiModeEnabled = false;
     private Vector3 originalArmaturePosition;
 
     void Start()
@@ -50,6 +51,9 @@ public class ChibiToggle : MonoBehaviour
 
     public void ToggleChibiMode()
     {
+        // Chibi mode is intentionally disabled in this fork.
+        if (!chibiModeEnabled) return;
+
         if (!armatureRoot || !head || !leftFoot || !rightFoot) return;
 
         bool becomingChibi = !isChibi;

@@ -21,6 +21,7 @@
 - 本地 Addressables group 已关闭 `Use Asset Bundle Cache`。
 - 启动完成后的菜单启动音效已禁用；默认 UI 语言已改为简体中文。
 - Unity 内置 Splash 已关闭；新增项目内加载场景作为首屏。
+- 右键径向菜单打开后固定在展开瞬间的位置；Chibi/大头缩身功能已屏蔽。
 
 ## 正在处理
 
@@ -74,6 +75,11 @@
 - 新增 `Mate Engine Loading.unity` 和 `LoadingScreenController`，运行时创建 Canvas 加载页并异步加载主场景。
 - `ProjectSettings` 已关闭 Unity 内置 Splash Screen，避免启动早期 Splash 渲染异常。
 
+### 右键径向菜单
+
+- `MenuActions` 保留打开瞬间按目标骨骼定位右键径向菜单，但菜单打开后不再逐帧跟随人物骨骼，避免舞蹈或大幅移动时菜单漂移。
+- 主场景中的 `Chibi` 径向菜单按钮已设为 inactive；`UISetOnOff.ToggleChibiMode()` 和 `ChibiToggle.ToggleChibiMode()` 保留兼容入口但不再执行大头缩身变形。
+
 ## 可选后续方向
 
 - 程序化空闲动作：自主张望、自主踱步、随机兴趣点。
@@ -101,3 +107,4 @@
 | 2026-06-19 | LocalLow 空目录排查（多轮迭代） | 代码完成，待构建/运行复核 | 逐层定位到 Unity C++ 原生引擎 Cache 初始化 → 修复：`-cache-path` 命令行参数（主）+ 后台 PowerShell 清理（兜底） |
 | 2026-06-19 | 启动音效禁用与默认简中 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity 构建 |
 | 2026-06-19 | 自定义加载场景替代 Unity Splash | 静态验证完成，待 Unity 运行复核 | Unity Splash 已关闭；Build 场景顺序为 Loading -> Main |
+| 2026-06-19 | 右键径向菜单固定与 Chibi 功能屏蔽 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity Play Mode |
