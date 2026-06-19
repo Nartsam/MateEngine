@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-20（禁止设置菜单底部弹性越界空白）
+- 上次更新：2026-06-20（设置菜单调试区运行时裁剪兜底）
 
 ## 当前状态
 
@@ -26,6 +26,7 @@
 - 已补齐嵌入 Addressables 包中被旧 `.gitignore` 误忽略的 `Build` 子目录源码；`.gitignore` 的 Unity 生成目录规则已限制为仓库根目录。
 - 托盘右键菜单已全部汉化为简体中文。
 - 设置面板 X 按钮改为隐藏窗口到托盘（不再退出）；双击托盘图标恢复窗口；只有右键菜单"退出"才真正退出。
+- 设置面板主滚动列表打开时会按 `= DEBUG` 底部按钮重新裁剪 Content 高度，并强制夹住 ScrollRect，避免被移除推广区在运行时留下可滚动空白。
 
 ## 正在处理
 
@@ -103,6 +104,7 @@
   - Discord：`DiscordPresence`（运行时 Rich Presence 连接）、`Discord RPC`（设置面板"DISCORD 状态显示"勾选框整行）、`Discord`（Discord 图标 + 加入服务器按钮）。`DiscordRPC` 库与 `DiscordPresence.cs` 保留以免破坏编译，对象 inactive 后运行时不再连接。
   - 设置菜单内容区底部 3 块推广（紧邻 `= DEBUG`/强制垃圾清理之后）：屏蔽 3 个标题 section `= STEAM DLC`、`= MINECRAFT`、`= FOOD SYSTEM`，以及它们在 `Category Background` 下对应的背景卡片 `Image (12)`~`Image (14)`（3 个）。标题与背景是分离的同级对象，故两处都要屏蔽；`Image (11)` 是 `= DEBUG` 的背景卡片，必须保留并收紧高度。
   - 设置面板 ScrollRect 内容根（fileID 6157687972013927576）高度从 `SizeDelta.y: 5000` 缩小到 `3948`，`Image (11)` 高度从 `220` 收紧到 `180`，使滚动区止于"强制垃圾清理"（= DEBUG）调试按钮底边；同时将该 ScrollRect 的 `Movement Type` 从 Elastic 改为 Clamped，避免在底部继续滚动时弹性越界露出被移除推广区留下的空白。
+- 新增 `SettingsMenuScrollBoundsLimiter` 并挂载到 `SettingsMenuCanvas`：设置面板打开时按 `Delete AI History` 按钮的实际世界坐标重新计算主设置 ScrollRect Content 高度，下一帧再复核一次，并在运行时强制 `MovementType.Clamped`、停止惯性、夹住当前滚动位置。该兜底覆盖 Unity 运行时或布局刷新把被移除推广区高度带回来的情况。
 - `AvatarLibraryMenu.dlcAvatars` 列表清空，移除模型选项中 3 个 `fileType: DLC` 模型（Aldina / Lazuli / Ayrina）；保留默认 `Built-in` 模型与用户导入的 VRM。DLC 项由 `RefreshUI()` 按列表运行时动态生成，故从数据源清空而非屏蔽 UI。
 
 ## 可选后续方向
@@ -116,7 +118,7 @@
 
 | 问题 | 状态 | 备注 |
 |---|---|---|
-| 当前变更尚未提交 | 未处理 | 需要先验证再 commit |
+| 当前变更尚未提交 | 已处理 | 任务变更完成后提交 |
 | 默认 Avatar 分发风险 | 持续关注 | Zome 不可随自制 build 分发 |
 | Unity 版本敏感 | 持续关注 | 必须使用 `6000.2.6f2` |
 | 外部写入审计 | 静态已完成，待运行复核 | 需运行构建产物后确认磁盘和注册表实际行为 |
@@ -140,3 +142,4 @@
 | 2026-06-19 | X 按钮隐藏前关闭设置面板 | 代码完成，待运行复核 | 根因：原先按子面板名（Debugging/Main Menu）查找，子面板可能 inactive 且名称不唯一，`GameObject.Find` 时灵时不灵；改为关闭唯一且必为 active 的根容器 `SettingsMenuCanvas` |
 | 2026-06-19 | 双击恢复时设置菜单闪烁修复 | 代码完成，待运行复核 | 渲染时序差：关面板后用协程放行一帧（`yield null` + `WaitForEndOfFrame`）再隐藏窗口，避免窗口前缓冲区定格在带菜单旧帧 |
 | 2026-06-20 | 移除 Discord / 设置菜单广告 / DLC 模型 | 静态复核完成，待运行复核 | 场景屏蔽 Discord 三对象 + 3 块推广 section（STEAM DLC/MINECRAFT/FOOD SYSTEM）；保留并收紧 `Image (11)` 作为 DEBUG 背景，仅屏蔽推广背景 `Image (12)`~`Image (14)`；ScrollRect 内容高度止于调试按钮底边，并改为 Clamped 防止底部弹性越界空白；清空 `AvatarLibraryMenu.dlcAvatars`，模型选项仅留 Built-in 与用户导入 VRM |
+| 2026-06-20 | 设置菜单调试区底部空白复查 | 代码完成，待构建/运行复核 | 用户命令行重建后仍复现，确认主场景 BuildSettings 正确，追加 `SettingsMenuScrollBoundsLimiter` 在打开 `SettingsMenuCanvas` 时基于 `Delete AI History` 实际底边重新裁剪主设置 Content，并强制 Clamped |
