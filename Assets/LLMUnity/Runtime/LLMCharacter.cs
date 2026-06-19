@@ -18,9 +18,9 @@ namespace LLMUnity
     public class LLMCharacter : LLMCaller
     {
         /// <summary> file to save the chat history.
-        /// The file will be saved within the persistentDataPath directory. </summary>
+        /// The file will be saved within the portable AI data directory. </summary>
         /// 
-        [Tooltip("file to save the chat history. The file will be saved within the persistentDataPath directory.")]
+        [Tooltip("file to save the chat history. The file will be saved within the portable AI data directory.")]
         [LLM] public string save = "";
         /// <summary> save the LLM cache. Speeds up the prompt calculation when reloading from history but also requires ~100MB of space per character. </summary>
         [Tooltip("save the LLM cache. Speeds up the prompt calculation when reloading from history but also requires ~100MB of space per character.")]
@@ -161,29 +161,9 @@ namespace LLMUnity
             InitGrammar();
             InitHistory();
         }
-        /*
         void Start()
         {
-            string promptPath = Path.Combine(Application.persistentDataPath, "character_prompt.txt");
-
-            if (File.Exists(promptPath))
-            {
-                string loadedPrompt = File.ReadAllText(promptPath);
-                SetPrompt(loadedPrompt, true);
-                Debug.Log("[LLM] Character prompt loaded: " + loadedPrompt.Substring(0, Mathf.Min(50, loadedPrompt.Length)) + "...");
-            }
-            else
-            {
-                File.WriteAllText(promptPath, this.prompt);
-                Debug.Log("[LLM] Character prompt file not found. Created new one with default system prompt.");
-                SetPrompt(this.prompt, true);
-            }
-        }
-        */
-
-        void Start()
-        {
-            string promptPath = Path.Combine(Application.persistentDataPath, "ZomeAI_prompt.txt");
+            string promptPath = Path.Combine(PortablePaths.AIDir, "ZomeAI_prompt.txt");
             string finalPrompt = this.prompt;
 
             if (File.Exists(promptPath))
@@ -263,7 +243,7 @@ namespace LLMUnity
 
         protected virtual string GetSavePath(string filename)
         {
-            return Path.Combine(Application.persistentDataPath, filename).Replace('\\', '/');
+            return Path.Combine(PortablePaths.AIDir, filename).Replace('\\', '/');
         }
 
         /// <summary>

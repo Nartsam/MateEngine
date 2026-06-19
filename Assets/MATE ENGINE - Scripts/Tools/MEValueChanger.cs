@@ -1053,7 +1053,7 @@ public class MEValueChanger : MonoBehaviour
 
     string GetBaseDir()
     {
-        return Path.Combine(Application.persistentDataPath, "MEValueChanger");
+        return PortablePaths.ValueChangerDir;
     }
 
     string GetSettingsPath()

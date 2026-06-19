@@ -37,16 +37,18 @@ public class MEModLoader : MonoBehaviour
 
     private void Start()
     {
-        string chibiBase = Path.Combine(Application.streamingAssetsPath, "Mods/ModLoader/Chibi Mode/Sounds");
+        string modLoaderRoot = Path.Combine(PortablePaths.ModsDir, "ModLoader");
+
+        string chibiBase = Path.Combine(modLoaderRoot, "Chibi Mode/Sounds");
         enterFolder = Path.Combine(chibiBase, "Enter Sounds");
         exitFolder = Path.Combine(chibiBase, "Exit Sounds");
-        chibiSettingsPath = Path.Combine(Application.streamingAssetsPath, "Mods/ModLoader/Chibi Mode/settings.json");
+        chibiSettingsPath = Path.Combine(modLoaderRoot, "Chibi Mode/settings.json");
 
-        string dragBase = Path.Combine(Application.streamingAssetsPath, "Mods/ModLoader/Drag Mode/Sounds");
+        string dragBase = Path.Combine(modLoaderRoot, "Drag Mode/Sounds");
         dragFolder = Path.Combine(dragBase, "Drag Sounds");
         placeFolder = Path.Combine(dragBase, "Place Sounds");
 
-        hoverReactionsFolder = Path.Combine(Application.streamingAssetsPath, "Mods/ModLoader/Hover Reactions");
+        hoverReactionsFolder = Path.Combine(modLoaderRoot, "Hover Reactions");
 
         EnsureFolderStructure();
 

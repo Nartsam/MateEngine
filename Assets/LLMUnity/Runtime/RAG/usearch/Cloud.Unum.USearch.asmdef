@@ -1,3 +1,6 @@
 {
-	"name": "Cloud.Unum.USearch"
+    "name": "Cloud.Unum.USearch",
+    "references": [
+        "MateEngine.Portable"
+    ]
 }

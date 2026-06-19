@@ -12,11 +12,8 @@ public class SaveLoadHandler : MonoBehaviour
 
     // Multi-Instance Variablen
     private static string fileName = "settings.json";
-    private static string customDataDir = null;
 
-    private string BaseDir => string.IsNullOrEmpty(customDataDir)
-        ? Application.persistentDataPath
-        : Path.Combine(Application.persistentDataPath, customDataDir);
+    private string BaseDir => PortablePaths.UserDataRoot;
 
     private string FilePath => Path.Combine(BaseDir, fileName);
 
@@ -36,10 +33,8 @@ public class SaveLoadHandler : MonoBehaviour
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i].Equals("--savefile", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                fileName = args[i + 1].Trim('"');
+                fileName = SanitizeSaveFileName(args[i + 1]);
 
-            if (args[i].Equals("--datadir", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                customDataDir = args[i + 1].Trim('"');
         }
 
         LoadFromDisk();
@@ -78,6 +73,17 @@ public class SaveLoadHandler : MonoBehaviour
         {
             Debug.LogError("[SaveLoadHandler] Failed to save: " + e);
         }
+    }
+
+    private static string SanitizeSaveFileName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "settings.json";
+
+        string safeName = Path.GetFileName(value.Trim().Trim('"'));
+        foreach (char c in Path.GetInvalidFileNameChars())
+            safeName = safeName.Replace(c, '_');
+
+        return string.IsNullOrWhiteSpace(safeName) ? "settings.json" : safeName;
     }
 
     // Laden

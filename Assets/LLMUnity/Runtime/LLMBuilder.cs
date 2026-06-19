@@ -15,7 +15,7 @@ namespace LLMUnity
     public class LLMBuilder : AssetPostprocessor
     {
         static List<StringPair> movedPairs = new List<StringPair>();
-        public static string BuildTempDir = Path.Combine(Application.temporaryCachePath, "LLMUnityBuild");
+        public static string BuildTempDir = Path.Combine(global::PortablePaths.CacheDir, "LLMUnityBuild");
         static string movedCache = Path.Combine(BuildTempDir, "moved.json");
 
         [InitializeOnLoadMethod]

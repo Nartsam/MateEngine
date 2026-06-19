@@ -229,7 +229,7 @@ public class BlendshapeManager : MonoBehaviour
 
     private string GetSaveFolder()
     {
-        string folder = Path.Combine(Application.persistentDataPath, "Blendshapes");
+        string folder = PortablePaths.BlendshapesDir;
         if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
         return folder;
     }
@@ -285,13 +285,9 @@ public class BlendshapeManager : MonoBehaviour
         var loader = FindFirstObjectByType<VRMLoader>();
         if (loader != null)
         {
-            string key = "SavedPathModel";
-            if (PlayerPrefs.HasKey(key))
-            {
-                string savedPath = PlayerPrefs.GetString(key);
-                if (!string.IsNullOrEmpty(savedPath))
-                    avatarName = Path.GetFileNameWithoutExtension(savedPath);
-            }
+            string savedPath = SaveLoadHandler.Instance?.data?.selectedModelPath;
+            if (!string.IsNullOrEmpty(savedPath))
+                avatarName = Path.GetFileNameWithoutExtension(savedPath);
 
             var loaderType = typeof(VRMLoader);
             var customModelOutputField = loaderType.GetField("customModelOutput", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);

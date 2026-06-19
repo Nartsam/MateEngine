@@ -12,8 +12,7 @@ public class MateScreenshotHandler : MonoBehaviour
         Camera cam = targetCamera != null ? targetCamera : (Camera.main != null ? Camera.main : FindObjectOfType<Camera>());
         if (cam == null) return;
 
-        string pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-        string dir = Path.Combine(pictures, "MateScreenshots");
+        string dir = PortablePaths.ScreenshotsDir;
         Directory.CreateDirectory(dir);
 
         int w = Mathf.Max(1, Screen.width * 2);

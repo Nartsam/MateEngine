@@ -85,7 +85,7 @@ namespace CustomDancePlayer
         void Awake()
         {
             if (handler == null) handler = GetComponent<AvatarDanceHandler>();
-            var dir = Path.Combine(Application.persistentDataPath, "Sync");
+            var dir = PortablePaths.SyncDir;
             try { Directory.CreateDirectory(dir); } catch { }
             path = Path.Combine(dir, fileName);
             TryAcquireLeader();

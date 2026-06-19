@@ -36,16 +36,21 @@ public class VRMLoader : MonoBehaviour
             ? SaveLoadHandler.Instance.data.selectedModelPath
             : null;
 
-        if (string.IsNullOrEmpty(savedPath) && PlayerPrefs.HasKey(LegacyModelPathKey))
+        try
         {
-            savedPath = PlayerPrefs.GetString(LegacyModelPathKey);
-            if (SaveLoadHandler.Instance != null)
+            if (string.IsNullOrEmpty(savedPath) && PlayerPrefs.HasKey(LegacyModelPathKey))
             {
-                SaveLoadHandler.Instance.data.selectedModelPath = savedPath;
-                SaveLoadHandler.Instance.SaveToDisk();
+                savedPath = PlayerPrefs.GetString(LegacyModelPathKey);
+                if (SaveLoadHandler.Instance != null)
+                {
+                    SaveLoadHandler.Instance.data.selectedModelPath = savedPath;
+                    SaveLoadHandler.Instance.SaveToDisk();
+                }
             }
-            PlayerPrefs.DeleteKey(LegacyModelPathKey);
-            PlayerPrefs.Save();
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[VRMLoader] Legacy PlayerPrefs migration skipped: {e.Message}");
         }
         if (SaveLoadHandler.Instance != null && SaveLoadHandler.Instance.data.enableRandomAvatar)
         {
@@ -72,7 +77,7 @@ public class VRMLoader : MonoBehaviour
 
         try
         {
-            string avatarsPath = System.IO.Path.Combine(Application.persistentDataPath, "avatars.json");
+            string avatarsPath = System.IO.Path.Combine(PortablePaths.UserDataRoot, "avatars.json");
             if (System.IO.File.Exists(avatarsPath))
             {
                 var entries = JsonConvert.DeserializeObject<System.Collections.Generic.List<AvatarLibraryMenu.AvatarEntry>>(System.IO.File.ReadAllText(avatarsPath));
@@ -326,7 +331,7 @@ public class VRMLoader : MonoBehaviour
 
     public void ResetModel()
     {
-        string vrmFolder = Path.Combine(Application.persistentDataPath, "VRM");
+        string vrmFolder = PortablePaths.VRMDir;
         if (Directory.Exists(vrmFolder))
             Directory.Delete(vrmFolder, true);
 

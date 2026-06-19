@@ -379,7 +379,7 @@ namespace Lachee.Discord
         private static void SetupDefaultCacheDirectory()
         {
             if (CacheDirectory == null)
-                CacheDirectory = Application.dataPath + "/Discord Rpc/Cache";
+                CacheDirectory = Path.Combine(global::PortablePaths.CacheDir, "DiscordRPC", "Avatars");
         }
        
         /// <summary>

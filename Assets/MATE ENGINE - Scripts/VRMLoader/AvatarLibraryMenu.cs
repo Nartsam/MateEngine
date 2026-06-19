@@ -34,8 +34,8 @@ public class AvatarLibraryMenu : MonoBehaviour
     [SerializeField] private float liveUpdateInterval = 3f;
 
 
-    private string avatarsJsonPath => Path.Combine(Application.persistentDataPath, "avatars.json");
-    private string thumbnailsFolder => Path.Combine(Application.persistentDataPath, "Thumbnails");
+    private string avatarsJsonPath => Path.Combine(PortablePaths.UserDataRoot, "avatars.json");
+    private string thumbnailsFolder => PortablePaths.ThumbnailsDir;
 
     private List<AvatarEntry> avatarEntries = new List<AvatarEntry>();
 
@@ -318,8 +318,8 @@ public class AvatarLibraryMenu : MonoBehaviour
 
     public static void AddAvatarToLibrary(string displayName, string author, string version, string fileType, string filePath, Texture2D thumbnail, int polygonCount)
     {
-        string avatarsJsonPath = Path.Combine(Application.persistentDataPath, "avatars.json");
-        string thumbnailsFolder = Path.Combine(Application.persistentDataPath, "Thumbnails");
+        string avatarsJsonPath = Path.Combine(PortablePaths.UserDataRoot, "avatars.json");
+        string thumbnailsFolder = PortablePaths.ThumbnailsDir;
 
         if (!Directory.Exists(thumbnailsFolder))
             Directory.CreateDirectory(thumbnailsFolder);
@@ -379,7 +379,7 @@ public class AvatarLibraryMenu : MonoBehaviour
 
     private void RemoveAvatar(AvatarEntry entryToRemove)
     {
-        string avatarsJsonPath = Path.Combine(Application.persistentDataPath, "avatars.json");
+        string avatarsJsonPath = Path.Combine(PortablePaths.UserDataRoot, "avatars.json");
 
         if (!File.Exists(avatarsJsonPath))
             return;
@@ -411,7 +411,7 @@ public class AvatarLibraryMenu : MonoBehaviour
     }
     private void SaveAvatars()
     {
-        string avatarsJsonPath = Path.Combine(Application.persistentDataPath, "avatars.json");
+        string avatarsJsonPath = Path.Combine(PortablePaths.UserDataRoot, "avatars.json");
         string newJson = JsonConvert.SerializeObject(avatarEntries, Formatting.Indented);
         File.WriteAllText(avatarsJsonPath, newJson);
     }

@@ -612,6 +612,8 @@ namespace LLMUnity
         /// <summary>
         /// Serialises and saves the model manager
         /// </summary>
+        static string LLMManagerPrefsPath => System.IO.Path.Combine(PortablePaths.LLMDir, "LLMManager_prefs.json");
+
         public static void Save()
         {
             string json = JsonUtility.ToJson(new LLMManagerStore
@@ -619,8 +621,15 @@ namespace LLMUnity
                 modelEntries = modelEntries,
                 downloadOnStart = downloadOnStart,
             }, true);
-            PlayerPrefs.SetString(LLMManagerPref, json);
-            PlayerPrefs.Save();
+            try
+            {
+                Directory.CreateDirectory(PortablePaths.LLMDir);
+                File.WriteAllText(LLMManagerPrefsPath, json);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[LLMManager] Failed to save prefs: {e.Message}");
+            }
         }
 
         /// <summary>
@@ -628,11 +637,19 @@ namespace LLMUnity
         /// </summary>
         public static void Load()
         {
-            string pref = PlayerPrefs.GetString(LLMManagerPref);
-            if (pref == null || pref == "") return;
-            LLMManagerStore store = JsonUtility.FromJson<LLMManagerStore>(pref);
-            downloadOnStart = store.downloadOnStart;
-            modelEntries = store.modelEntries;
+            if (!File.Exists(LLMManagerPrefsPath)) return;
+            try
+            {
+                string json = File.ReadAllText(LLMManagerPrefsPath);
+                if (string.IsNullOrEmpty(json)) return;
+                LLMManagerStore store = JsonUtility.FromJson<LLMManagerStore>(json);
+                downloadOnStart = store.downloadOnStart;
+                modelEntries = store.modelEntries;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[LLMManager] Failed to load prefs: {e.Message}");
+            }
         }
 
         /// <summary>

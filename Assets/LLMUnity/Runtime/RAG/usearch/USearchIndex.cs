@@ -364,17 +364,21 @@ namespace Cloud.Unum.USearch
 
         public void Save(ZipArchive zipArchive)
         {
-            string indexPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-            Save(indexPath);
+            Directory.CreateDirectory(global::PortablePaths.CacheDir);
+            string indexPath = Path.Combine(global::PortablePaths.CacheDir, Path.GetRandomFileName());
             try
             {
+                Save(indexPath);
                 zipArchive.CreateEntryFromFile(indexPath, GetIndexFilename());
             }
             catch (Exception ex)
             {
                 Debug.LogError($"Error adding file to the zip archive: {ex.Message}");
             }
-            File.Delete(indexPath);
+            finally
+            {
+                try { if (File.Exists(indexPath)) File.Delete(indexPath); } catch { }
+            }
         }
 
         public void Load(ZipArchive zipArchive)

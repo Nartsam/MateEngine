@@ -1,6 +1,7 @@
 ﻿using DiscordRPC.Message;
 using Lachee.Discord.Events;
 using System.Collections;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -237,7 +238,7 @@ namespace Lachee.Discord
 			} 
 			else
             {
-				logger = new DiscordRPC.Logging.FileLogger(logFile) { Level = logLevel };
+				logger = new DiscordRPC.Logging.FileLogger(GetPortableLogFilePath()) { Level = logLevel };
             }
 
 			//We are starting the client. Below is a break down of the parameters.
@@ -310,6 +311,22 @@ namespace Lachee.Discord
 			Debug.Log("[DRP] Discord Rich Presence intialized and connecting...");
 
 #endif
+		}
+
+		private string GetPortableLogFilePath()
+		{
+			if (string.IsNullOrWhiteSpace(logFile) || Path.IsPathRooted(logFile))
+				return logFile;
+
+			try
+			{
+				Directory.CreateDirectory(global::PortablePaths.CacheDir);
+				return Path.Combine(global::PortablePaths.CacheDir, logFile);
+			}
+			catch
+			{
+				return logFile;
+			}
 		}
 
 		/// <summary>

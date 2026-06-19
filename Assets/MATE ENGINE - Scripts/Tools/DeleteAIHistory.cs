@@ -24,8 +24,8 @@ public class DeleteAIHistory : MonoBehaviour
 
     public void DeleteHistoryFiles()
     {
-        string jsonPath = Path.Combine(Application.persistentDataPath, fileName + ".json");
-        string cachePath = Path.Combine(Application.persistentDataPath, fileName + ".cache");
+        string jsonPath = Path.Combine(PortablePaths.AIDir, fileName + ".json");
+        string cachePath = Path.Combine(PortablePaths.AIDir, fileName + ".cache");
 
         bool deletedSomething = false;
 

@@ -150,7 +150,7 @@ namespace LLMUnity
         {
             try
             {
-                string path = LLMUnitySetup.GetAssetPath(filePath);
+                string path = GetPortableSavePath(filePath);
                 ArchiveSaver.Save(path, Save);
             }
             catch (Exception e)
@@ -168,7 +168,8 @@ namespace LLMUnity
             try
             {
                 await LLMUnitySetup.AndroidExtractAsset(filePath, true);
-                string path = LLMUnitySetup.GetAssetPath(filePath);
+                string path = GetPortableSavePath(filePath);
+                if (!File.Exists(path)) path = LLMUnitySetup.GetAssetPath(filePath);
                 if (!File.Exists(path)) return false;
                 ArchiveSaver.Load(path, Load);
             }
@@ -186,6 +187,11 @@ namespace LLMUnity
         public virtual string GetSavePath(string name)
         {
             return Path.Combine(GetType().Name, name);
+        }
+
+        static string GetPortableSavePath(string filePath)
+        {
+            return Path.Combine(PortablePaths.LLMDir, LLMUnitySetup.SanitizePortableRelativePath(filePath, "search.zip")).Replace('\\', '/');
         }
 
         public virtual void UpdateGameObjects() {}
@@ -497,6 +503,10 @@ namespace LLMUnity
 
         public static void Save(string filePath, ArchiveSaverCallback callback)
         {
+            string dir = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
             using (FileStream stream = new FileStream(filePath, FileMode.Create))
             using (ZipArchive archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {

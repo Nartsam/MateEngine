@@ -168,7 +168,7 @@ namespace CustomDancePlayer
             if (maxPlayTimeText != null) defaultMaxPlayTimeText = maxPlayTimeText.text;
             BindUI();
 
-            var dir = Path.Combine(Application.persistentDataPath, "Sync");
+            var dir = PortablePaths.SyncDir;
             try { Directory.CreateDirectory(dir); } catch { }
             busPath = Path.Combine(dir, syncFileName);
             TryAcquireLeader();
@@ -444,7 +444,7 @@ namespace CustomDancePlayer
             string streamDir = Path.Combine(Application.streamingAssetsPath, streamingSubfolder);
             if (Directory.Exists(streamDir)) files.AddRange(Directory.GetFiles(streamDir, "*", SearchOption.AllDirectories));
 
-            string modsDir = Path.Combine(Application.persistentDataPath, modsFolderName);
+            string modsDir = Path.Combine(PortablePaths.UserDataRoot, modsFolderName);
             Directory.CreateDirectory(modsDir);
             files.AddRange(Directory.GetFiles(modsDir, "*", SearchOption.AllDirectories));
 
@@ -491,7 +491,7 @@ namespace CustomDancePlayer
             if (!IsModEnabled(id)) return;
             if (byId.ContainsKey(id)) return;
 
-            string cacheRoot = Path.Combine(Application.temporaryCachePath, "ME_Cache");
+            string cacheRoot = PortablePaths.MECacheDir;
             Directory.CreateDirectory(cacheRoot);
             string dst = Path.Combine(cacheRoot, id);
 

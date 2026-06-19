@@ -1,6 +1,8 @@
 {
     "name": "com.lachee.discordrpc.runtime",
-    "references": [],
+    "references": [
+        "MateEngine.Portable"
+    ],
     "optionalUnityReferences": [],
     "includePlatforms": [],
     "excludePlatforms": [],

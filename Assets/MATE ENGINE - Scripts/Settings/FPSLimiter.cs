@@ -15,10 +15,6 @@ public class FPSLimiter : MonoBehaviour
 
     void Start()
     {
-        // Load saved FPS limit
-        targetFPS = PlayerPrefs.GetInt("FPSLimit", targetFPS);
-
-        // Setup slider
         if (fpsSlider)
         {
             fpsSlider.minValue = 15;
@@ -45,8 +41,11 @@ public class FPSLimiter : MonoBehaviour
         QualitySettings.vSyncCount = 0;
         previousFPS = targetFPS;
 
-        PlayerPrefs.SetInt("FPSLimit", targetFPS);
-        PlayerPrefs.Save();
+        if (SaveLoadHandler.Instance != null)
+        {
+            SaveLoadHandler.Instance.data.fpsLimit = targetFPS;
+            SaveLoadHandler.Instance.SaveToDisk();
+        }
 
         UpdateFPSLabel(targetFPS);
         Debug.Log("FPS set to: " + targetFPS);

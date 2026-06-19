@@ -33,7 +33,8 @@ public class SystemStartHandler : MonoBehaviour
             autoStartToggle.onValueChanged.AddListener(OnUIToggleChanged);
 
         LoadFromSaveWithoutNotify();
-        TryApplyRegistry(SaveLoadHandler.Instance.data.startWithWindows);
+        if (SaveLoadHandler.Instance.data.startWithWindows)
+            TryApplyRegistry(true);
     }
 
     private void OnDestroy()

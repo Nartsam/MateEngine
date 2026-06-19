@@ -115,7 +115,7 @@ namespace LLMUnity
         /// <summary> LlamaLib extension url </summary>
         public static string LlamaLibExtensionURL = $"{LlamaLibReleaseURL}/{libraryName}-full.zip";
         /// <summary> LLMnity store path </summary>
-        public static string LLMUnityStore = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LLMUnity");
+        public static string LLMUnityStore = Path.Combine("UserData", "LLM");
         /// <summary> Model download path </summary>
         public static string modelDownloadPath = Path.Combine(LLMUnityStore, "models");
         /// <summary> Path of file with build information for runtime </summary>
@@ -201,18 +201,51 @@ namespace LLMUnity
             foreach (Callback<string> errorCallback in errorCallbacks) errorCallback(message);
         }
 
+        static string LLMSettingsPath => Path.Combine(PortablePaths.LLMDir, "llm_settings.json");
+
         static void LoadPlayerPrefs()
         {
-            DebugMode = (DebugModeType)PlayerPrefs.GetInt(DebugModeKey, (int)DebugModeType.All);
-            FullLlamaLib = PlayerPrefs.GetInt(FullLlamaLibKey, 0) == 1;
+            LLMUnityStore = PortablePaths.LLMDir;
+            modelDownloadPath = PortablePaths.LLMModelsDir;
+
+            if (File.Exists(LLMSettingsPath))
+            {
+                try
+                {
+                    var data = JsonUtility.FromJson<LLMSettingsData>(File.ReadAllText(LLMSettingsPath));
+                    DebugMode = (DebugModeType)data.debugMode;
+                    FullLlamaLib = data.fullLlamaLib;
+                    return;
+                }
+                catch { }
+            }
+            DebugMode = DebugModeType.All;
+            FullLlamaLib = false;
+        }
+
+        static void SaveLLMSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(PortablePaths.LLMDir);
+                var data = new LLMSettingsData
+                {
+                    debugMode = (int)DebugMode,
+                    fullLlamaLib = FullLlamaLib
+                };
+                File.WriteAllText(LLMSettingsPath, JsonUtility.ToJson(data, true));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[LLMUnitySetup] Failed to save LLM settings: {e.Message}");
+            }
         }
 
         public static void SetDebugMode(DebugModeType newDebugMode)
         {
             if (DebugMode == newDebugMode) return;
             DebugMode = newDebugMode;
-            PlayerPrefs.SetInt(DebugModeKey, (int)DebugMode);
-            PlayerPrefs.Save();
+            SaveLLMSettings();
         }
 
 #if UNITY_EDITOR
@@ -220,8 +253,7 @@ namespace LLMUnity
         {
             if (FullLlamaLib == value) return;
             FullLlamaLib = value;
-            PlayerPrefs.SetInt(FullLlamaLibKey, value ? 1 : 0);
-            PlayerPrefs.Save();
+            SaveLLMSettings();
             _ = DownloadLibrary();
         }
 
@@ -240,8 +272,39 @@ namespace LLMUnity
 
         public static string GetDownloadAssetPath(string relPath = "")
         {
-            string assetsDir = (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer || Application.platform == RuntimePlatform.VisionOS) ? Application.persistentDataPath : Application.streamingAssetsPath;
+#if UNITY_EDITOR
+            string assetsDir =
+                (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer || Application.platform == RuntimePlatform.VisionOS)
+                    ? Application.persistentDataPath
+                    : Application.streamingAssetsPath;
             return Path.Combine(assetsDir, relPath).Replace('\\', '/');
+#else
+            if (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer || Application.platform == RuntimePlatform.VisionOS)
+                return Path.Combine(Application.persistentDataPath, relPath).Replace('\\', '/');
+
+            return Path.Combine(PortablePaths.LLMModelsDir, SanitizePortableRelativePath(relPath)).Replace('\\', '/');
+#endif
+        }
+
+        public static string SanitizePortableRelativePath(string path, string fallback = "")
+        {
+            if (string.IsNullOrWhiteSpace(path)) return fallback ?? "";
+
+            string[] parts = path.Trim().Trim('"').Split(new[] {'/', '\\'}, StringSplitOptions.RemoveEmptyEntries);
+            List<string> safeParts = new List<string>();
+            foreach (string part in parts)
+            {
+                if (part == "." || part == "..") continue;
+
+                string safePart = part;
+                foreach (char c in Path.GetInvalidFileNameChars())
+                    safePart = safePart.Replace(c, '_');
+
+                if (!string.IsNullOrWhiteSpace(safePart))
+                    safeParts.Add(safePart);
+            }
+
+            return safeParts.Count == 0 ? (fallback ?? "") : Path.Combine(safeParts.ToArray());
         }
 
 #if UNITY_EDITOR
@@ -254,7 +317,7 @@ namespace LLMUnity
 
 #else
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        void InitializeOnLoad()
+        static void InitializeOnLoad()
         {
             LoadPlayerPrefs();
         }
@@ -282,7 +345,7 @@ namespace LLMUnity
             else
             {
                 Log($"Downloading {fileUrl} to {savePath}...");
-                string tmpPath = Path.Combine(Application.temporaryCachePath, Path.GetFileName(savePath));
+                string tmpPath = Path.Combine(PortablePaths.CacheDir, Path.GetFileName(savePath));
 
                 ResumingWebClient client = new ResumingWebClient();
                 downloadClients[savePath] = client;
@@ -431,7 +494,7 @@ namespace LLMUnity
             string setupFile = Path.Combine(setupDir, urlName + ".complete");
             if (File.Exists(setupFile)) return;
 
-            string zipPath = Path.Combine(Application.temporaryCachePath, urlName);
+            string zipPath = Path.Combine(global::PortablePaths.CacheDir, "LLMUnitySetup", urlName);
             await DownloadFile(url, zipPath, true, null, SetLibraryProgress);
 
             AssetDatabase.StartAssetEditing();

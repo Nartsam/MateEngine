@@ -20,7 +20,7 @@ public class MEModHandler : MonoBehaviour
 
     void Start()
     {
-        modFolderPath = Path.Combine(Application.persistentDataPath, "Mods");
+        modFolderPath = PortablePaths.ModsDir;
         Directory.CreateDirectory(modFolderPath);
         if (loadModButton != null) loadModButton.onClick.AddListener(OpenFileDialogAndLoadMod);
         StartCoroutine(BootLoadMods());
@@ -108,7 +108,7 @@ public class MEModHandler : MonoBehaviour
     void LoadME(string path)
     {
         string id = Path.GetFileNameWithoutExtension(path);
-        string cacheRoot = Path.Combine(Application.temporaryCachePath, "ME_Cache");
+        string cacheRoot = PortablePaths.MECacheDir;
         Directory.CreateDirectory(cacheRoot);
         string dst = Path.Combine(cacheRoot, id);
 
@@ -571,7 +571,7 @@ public class MEModHandler : MonoBehaviour
 
     string GetThumbPath(string modName)
     {
-        return Path.Combine(Application.persistentDataPath, "Thumbnails", modName + "_thumb.png");
+        return Path.Combine(PortablePaths.ThumbnailsDir, modName + "_thumb.png");
     }
 
     void LoadThumbToRawImage(UnityEngine.UI.RawImage img, string modName)

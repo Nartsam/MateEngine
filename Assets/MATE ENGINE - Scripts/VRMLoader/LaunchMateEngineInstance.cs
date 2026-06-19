@@ -39,7 +39,7 @@ public class LaunchMateEngineInstances : MonoBehaviour
 
     void Awake()
     {
-        persistentPath = Application.persistentDataPath;
+        persistentPath = PortablePaths.UserDataRoot;
         DetectCurrentInstance();
 
         if (currentInstanceIndex > 0)
