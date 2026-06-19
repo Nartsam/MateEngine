@@ -29,6 +29,10 @@ Assets/Plugins/steam_appid*
 # Unity auto-generated files
 sysinfo.txt
 
+# Thry/Poiyomi editor-generated caches
+/Thry/preset_cache.txt
+/Thry/presets_known_materials.txt
+
 # Crash logs
 *.stacktrace
 
