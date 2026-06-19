@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-19（X 按钮隐藏前关闭设置面板）
+- 上次更新：2026-06-20（移除 Discord / 设置菜单广告 / DLC 模型）
 
 ## 当前状态
 
@@ -97,6 +97,14 @@
 - `UISetOnOff.CloseApp()` 在隐藏窗口前先调用 `CloseSettingsPanel()`：通过 `GameObject.Find("SettingsMenuCanvas")` 定位设置面板根容器并 `SetActive(false)`，确保双击托盘恢复后只显示角色、无残留设置菜单。`SettingsMenuCanvas` 是面板显隐单位（默认 inactive，打开入口即 `SetOnOff(SettingsMenuCanvas)`），名称全场景唯一；点 X 时面板可见即该容器必然 active，故 `GameObject.Find` 可靠命中。不再依赖可能 inactive、名称不唯一的子面板对象（Debugging / Main Menu / FooterToggles）。
 - 关闭面板与隐藏窗口之间存在渲染时序差：`SetActive(false)` 只改对象状态、当帧画面尚未重绘，若立即 `ShowWindow(SW_HIDE)`，窗口前缓冲区会定格在仍带菜单的上一帧，双击托盘恢复时先显示该旧帧再刷新，表现为设置菜单闪一下。改为协程 `HideAfterPanelClosed()`（`yield return null` + `WaitForEndOfFrame`）放行一帧、让无菜单画面渲染并呈现后再 `HideMainWindow()`，恢复时即为干净画面。
 
+### 移除 Discord、设置菜单广告与 DLC 模型
+
+- 主场景 `Mate Engine Main.unity` 屏蔽（`m_IsActive: 0`）以下对象，不改业务代码、不删第三方库，保留序列化引用，安全可逆：
+  - Discord：`DiscordPresence`（运行时 Rich Presence 连接）、`Discord RPC`（设置面板"DISCORD 状态显示"勾选框整行）、`Discord`（Discord 图标 + 加入服务器按钮）。`DiscordRPC` 库与 `DiscordPresence.cs` 保留以免破坏编译，对象 inactive 后运行时不再连接。
+  - 设置菜单内容区底部 3 块推广（紧邻 `= DEBUG`/强制垃圾清理之后）：屏蔽 3 个标题 section `= STEAM DLC`、`= MINECRAFT`、`= FOOD SYSTEM`，以及它们在 `Category Background` 下对应的背景卡片 `Image (12)`~`Image (14)`（3 个）。标题与背景是分离的同级对象，故两处都要屏蔽；`Image (11)` 是 `= DEBUG` 的背景卡片，必须保留。
+  - 设置面板 ScrollRect 内容根（fileID 6157687972013927576）高度从 `SizeDelta.y: 5000` 缩小到 `3968`，使滚动区止于"强制垃圾清理"（= DEBUG）背景卡片底部，下方无推广内容和空白。
+- `AvatarLibraryMenu.dlcAvatars` 列表清空，移除模型选项中 3 个 `fileType: DLC` 模型（Aldina / Lazuli / Ayrina）；保留默认 `Built-in` 模型与用户导入的 VRM。DLC 项由 `RefreshUI()` 按列表运行时动态生成，故从数据源清空而非屏蔽 UI。
+
 ## 可选后续方向
 
 - 程序化空闲动作：自主张望、自主踱步、随机兴趣点。
@@ -131,3 +139,4 @@
 | 2026-06-19 | 托盘菜单汉化与隐藏到托盘 | 代码完成，待构建/运行复核 | 托盘右键菜单全部中文；X 按钮隐藏窗口；双击托盘恢复；退出仅限右键菜单 |
 | 2026-06-19 | X 按钮隐藏前关闭设置面板 | 代码完成，待运行复核 | 根因：原先按子面板名（Debugging/Main Menu）查找，子面板可能 inactive 且名称不唯一，`GameObject.Find` 时灵时不灵；改为关闭唯一且必为 active 的根容器 `SettingsMenuCanvas` |
 | 2026-06-19 | 双击恢复时设置菜单闪烁修复 | 代码完成，待运行复核 | 渲染时序差：关面板后用协程放行一帧（`yield null` + `WaitForEndOfFrame`）再隐藏窗口，避免窗口前缓冲区定格在带菜单旧帧 |
+| 2026-06-20 | 移除 Discord / 设置菜单广告 / DLC 模型 | 静态复核完成，待运行复核 | 场景屏蔽 Discord 三对象 + 3 块推广 section（STEAM DLC/MINECRAFT/FOOD SYSTEM）；保留 `Image (11)` 作为 DEBUG 背景，仅屏蔽推广背景 `Image (12)`~`Image (14)`；清空 `AvatarLibraryMenu.dlcAvatars`，模型选项仅留 Built-in 与用户导入 VRM |
