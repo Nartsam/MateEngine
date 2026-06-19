@@ -22,6 +22,7 @@
 - 启动完成后的菜单启动音效已禁用；默认 UI 语言已改为简体中文。
 - Unity 内置 Splash 已关闭；新增项目内加载场景作为首屏。
 - 右键径向菜单打开后固定在展开瞬间的位置；Chibi/大头缩身功能已屏蔽。
+- 新增 `.gitattributes`，固定 Unity 文本资产和源码使用 LF，降低 Windows 构建/打开 Unity 后的假脏状态。
 
 ## 正在处理
 
@@ -52,6 +53,7 @@
 
 - 忽略 `UserSettings/`、`.vs/`、Steam 残留文件、Burst debug 目录、LLMManager 运行时配置等。
 - `Build/`、`Library/`、`Temp/`、`Logs/`、`obj/` 等本地输出目录不提交。
+- `.gitattributes` 不再忽略；仓库通过该文件固定 Unity 文本资产、源码和文档的换行策略。
 
 ### 绿色便携化
 
@@ -79,6 +81,7 @@
 
 - `MenuActions` 保留打开瞬间按目标骨骼定位右键径向菜单，但菜单打开后不再逐帧跟随人物骨骼，避免舞蹈或大幅移动时菜单漂移。
 - 主场景中的 `Chibi` 径向菜单按钮已设为 inactive；`UISetOnOff.ToggleChibiMode()` 和 `ChibiToggle.ToggleChibiMode()` 保留兼容入口但不再执行大头缩身变形。
+- `CircleSelector` 已将 inactive 源按钮排除在运行时圆环按钮列表之外，避免隐藏 Chibi 按钮后选择扇区和可点击按钮错位。
 
 ## 可选后续方向
 
@@ -108,3 +111,5 @@
 | 2026-06-19 | 启动音效禁用与默认简中 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity 构建 |
 | 2026-06-19 | 自定义加载场景替代 Unity Splash | 静态验证完成，待 Unity 运行复核 | Unity Splash 已关闭；Build 场景顺序为 Loading -> Main |
 | 2026-06-19 | 右键径向菜单固定与 Chibi 功能屏蔽 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity Play Mode |
+| 2026-06-19 | `.gitattributes` 换行策略 | 静态验证完成 | Unity 文本资产和源码固定为 LF；二进制资源标记为 binary |
+| 2026-06-19 | 径向菜单隐藏 Chibi 后点击失效修复 | 静态验证完成，待 Unity 运行复核 | inactive 源按钮不再参与 `CircleSelector` 的按钮实例和命中计算 |

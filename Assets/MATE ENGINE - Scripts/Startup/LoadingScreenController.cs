@@ -66,7 +66,8 @@ public class LoadingScreenController : MonoBehaviour
 
         CreateImage("Background", canvasObject.transform, backgroundSprite, Color.white, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
 
-        Image logo = CreateImage("Logo", canvasObject.transform, logoSprite, Color.white, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 80f), new Vector2(820f, 190f));
+        Image logo = CreateImage("Logo", canvasObject.transform, logoSprite, Color.white, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 80f), new Vector2(1640f, 380f));  // 原来: 820f, 190f。放大一倍
+        // Image logo = CreateImage("Logo", canvasObject.transform, logoSprite, Color.white, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 80f), new Vector2(820f, 190f));
         if (logo != null) logo.preserveAspect = true;
 
         statusText = CreateText(canvasObject.transform);

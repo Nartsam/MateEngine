@@ -71,9 +71,6 @@ sysinfo.txt
 Thumbs.db
 desktop.ini
 
-# Git-specific
-.gitattributes
-
 # Asset store tools
 Assets/AssetStoreTools*
 

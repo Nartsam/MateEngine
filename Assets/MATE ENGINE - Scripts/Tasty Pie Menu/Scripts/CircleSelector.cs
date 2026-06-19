@@ -120,8 +120,9 @@ namespace Xamin
 
                 for (int i = 0; i < Buttons.Count; i++)
                 {
-                    var btnComp = Buttons[i] != null ? Buttons[i].GetComponent<Xamin.Button>() : null;
-                    bool shouldBeVisible = btnComp != null ? !ShouldHideButton(btnComp) : false;
+                    var btnObj = Buttons[i];
+                    var btnComp = btnObj != null ? btnObj.GetComponent<Xamin.Button>() : null;
+                    bool shouldBeVisible = ShouldShowButton(btnObj, btnComp);
                     if (shouldBeVisible != lastButtonVisibility[i])
                     {
                         needsRebuild = true;
@@ -344,10 +345,15 @@ namespace Xamin
             List<GameObject> visibleButtonObjects = new List<GameObject>();
             foreach (var btnObj in Buttons)
             {
+                Xamin.Button sourceButton = btnObj != null ? btnObj.GetComponent<Xamin.Button>() : null;
+                if (!ShouldShowButton(btnObj, sourceButton)) continue;
+
                 GameObject buttonObj = buttonSource == ButtonSource.prefabs
                     ? Instantiate(btnObj, Vector2.zero, transform.rotation)
                     : btnObj;
-                Xamin.Button btn = buttonObj.GetComponent<Xamin.Button>();
+                Xamin.Button btn = buttonSource == ButtonSource.prefabs
+                    ? buttonObj.GetComponent<Xamin.Button>()
+                    : sourceButton;
                 if (ShouldHideButton(btn)) { Destroy(buttonObj); continue; }
                 visibleButtonObjects.Add(buttonObj);
                 visibleCount++;
@@ -394,8 +400,16 @@ namespace Xamin
                 transform.localScale = Vector3.zero;
             }
         }
+        bool ShouldShowButton(GameObject btnObj, Xamin.Button btn)
+        {
+            if (btnObj == null || btn == null) return false;
+            if (!btnObj.activeSelf) return false;
+            return !ShouldHideButton(btn);
+        }
+
         bool ShouldHideButton(Xamin.Button btn)
         {
+            if (btn == null) return true;
             if (animatorReceiver == null || animatorReceiver.avatarAnimator == null) return false;
             var animator = animatorReceiver.avatarAnimator;
 

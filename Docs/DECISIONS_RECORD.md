@@ -11,6 +11,7 @@
 | ADR-0003 | 2026-06-19 | 嵌入并 patch Addressables | Accepted |
 | ADR-0004 | 2026-06-19 | Unity 原生缓存重定向 | Accepted |
 | ADR-0005 | 2026-06-19 | 项目内自定义加载场景替代 Unity Splash | Accepted |
+| ADR-0006 | 2026-06-19 | Git 换行与二进制属性策略 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -168,3 +169,31 @@
 - Build 启动流程变为 `Mate Engine Loading.unity` 异步加载 `Mate Engine Main.unity`。
 - 如果新增或改名主场景，必须同步更新 `BuildScript.cs`、`EditorBuildSettings.asset` 和 `LoadingScreenController.mainScenePath`。
 - Unity Splash 设置保留旧 logo/background 引用但不再显示。
+
+
+## ADR-0006: Git 换行与二进制属性策略
+
+状态：Accepted
+
+背景：
+
+在 Windows 上打开 Unity 编辑器或执行命令行构建后，Git 会把部分 Unity 文本资产标记为 modified，但 `git diff` 没有内容差异。根因是本机 Git `core.autocrlf=true` 与 Unity 资源重写、文件状态刷新共同作用，容易产生换行相关的假脏状态。
+
+决策：
+
+- 新增仓库级 `.gitattributes`。
+- 将源码、文档、JSON/XML/TXT 以及 Unity 文本序列化资产（`.meta`、`.unity`、`.prefab`、`.asset`、`.mat` 等）固定为 `text eol=lf`。
+- 将图片、音频、模型、插件 DLL、压缩包和生成二进制显式标记为 `binary`。
+- `.gitignore` 不再忽略 `.gitattributes`，确保换行策略可随仓库同步。
+
+原因：
+
+- 项目主要资产是 Unity YAML 文本序列化文件，统一 LF 可以减少跨平台和命令行构建后的假修改。
+- 二进制资源不能参与换行转换，否则可能损坏资源。
+- 规则提交到仓库后，新环境不依赖开发者个人 Git 配置。
+
+后果：
+
+- 后续新增 Unity 文本资产默认按 LF 入库。
+- 已经存在的历史文件不会自动重写；如需完全规范化，必须单独执行一次受控的 renormalize 提交。
+- 开发者仍应在打开 Unity 或构建后检查 `git status`，只提交任务相关文件。
