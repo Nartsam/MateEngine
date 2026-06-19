@@ -1,14 +1,14 @@
 # Unity generated folders
-[Ll]ibrary/
-[Tt]emp/
-[Oo]bj/
-[Bb]uild/
-[Bb]uilds/
-[Ll]ogs/
-[Mm]emoryCaptures/
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Mm]emoryCaptures/
 
 # User-specific Unity settings
-UserSettings/
+/UserSettings/
 
 # AI Source
 Assets/StreamingAssets/undreamai-v1.2.4-llamacpp/
@@ -79,4 +79,3 @@ Assets/AssetStoreTools*
 .plastic/
 
 Assets/Example Avatar - USED FOR MATE ENGINE
-ProjectSettings/Packages

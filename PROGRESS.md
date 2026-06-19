@@ -23,6 +23,7 @@
 - Unity 内置 Splash 已关闭；新增项目内加载场景作为首屏。
 - 右键径向菜单打开后固定在展开瞬间的位置；Chibi/大头缩身功能已屏蔽。
 - 新增 `.gitattributes`，固定 Unity 文本资产和源码使用 LF，降低 Windows 构建/打开 Unity 后的假脏状态。
+- 已补齐嵌入 Addressables 包中被旧 `.gitignore` 误忽略的 `Build` 子目录源码；`.gitignore` 的 Unity 生成目录规则已限制为仓库根目录。
 
 ## 正在处理
 
@@ -54,6 +55,7 @@
 - 忽略 `UserSettings/`、`.vs/`、Steam 残留文件、Burst debug 目录、LLMManager 运行时配置等。
 - `Build/`、`Library/`、`Temp/`、`Logs/`、`obj/` 等本地输出目录不提交。
 - `.gitattributes` 不再忽略；仓库通过该文件固定 Unity 文本资产、源码和文档的换行策略。
+- Unity 生成目录 ignore 规则使用根目录锚定，避免误忽略嵌入包内部的 `Build/` 等源码目录；`ProjectSettings/Packages` 不再整目录忽略。
 
 ### 绿色便携化
 
@@ -113,3 +115,4 @@
 | 2026-06-19 | 右键径向菜单固定与 Chibi 功能屏蔽 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity Play Mode |
 | 2026-06-19 | `.gitattributes` 换行策略 | 静态验证完成 | Unity 文本资产和源码固定为 LF；二进制资源标记为 binary |
 | 2026-06-19 | 径向菜单隐藏 Chibi 后点击失效修复 | 静态验证完成，待 Unity 运行复核 | inactive 源按钮不再参与 `CircleSelector` 的按钮实例和命中计算 |
+| 2026-06-19 | Addressables 嵌入包缺失 `Build` 目录修复 | Unity 批处理编译检查通过 | 补齐 `Packages/com.unity.addressables/Editor/Build` 与 `Tests/Editor/Build`；原 `CS0234/CS0246` 不再出现 |
