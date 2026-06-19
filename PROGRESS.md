@@ -95,6 +95,7 @@
 - `TrayIcon` 新增 `WM_LBUTTONDBLCLK` 处理和 `OnDoubleClick` 回调；`SystemTray.Awake()` 注册双击回调调用 `ShowMainWindow()`。
 - 只有托盘右键菜单中的"退出"项调用 `Application.Quit()` 真正退出程序。
 - `UISetOnOff.CloseApp()` 在隐藏窗口前先调用 `CloseSettingsPanel()`：通过 `GameObject.Find("SettingsMenuCanvas")` 定位设置面板根容器并 `SetActive(false)`，确保双击托盘恢复后只显示角色、无残留设置菜单。`SettingsMenuCanvas` 是面板显隐单位（默认 inactive，打开入口即 `SetOnOff(SettingsMenuCanvas)`），名称全场景唯一；点 X 时面板可见即该容器必然 active，故 `GameObject.Find` 可靠命中。不再依赖可能 inactive、名称不唯一的子面板对象（Debugging / Main Menu / FooterToggles）。
+- 关闭面板与隐藏窗口之间存在渲染时序差：`SetActive(false)` 只改对象状态、当帧画面尚未重绘，若立即 `ShowWindow(SW_HIDE)`，窗口前缓冲区会定格在仍带菜单的上一帧，双击托盘恢复时先显示该旧帧再刷新，表现为设置菜单闪一下。改为协程 `HideAfterPanelClosed()`（`yield return null` + `WaitForEndOfFrame`）放行一帧、让无菜单画面渲染并呈现后再 `HideMainWindow()`，恢复时即为干净画面。
 
 ## 可选后续方向
 
@@ -129,3 +130,4 @@
 | 2026-06-19 | Addressables 嵌入包缺失 `Build` 目录修复 | Unity 批处理编译检查通过 | 补齐 `Packages/com.unity.addressables/Editor/Build` 与 `Tests/Editor/Build`；原 `CS0234/CS0246` 不再出现 |
 | 2026-06-19 | 托盘菜单汉化与隐藏到托盘 | 代码完成，待构建/运行复核 | 托盘右键菜单全部中文；X 按钮隐藏窗口；双击托盘恢复；退出仅限右键菜单 |
 | 2026-06-19 | X 按钮隐藏前关闭设置面板 | 代码完成，待运行复核 | 根因：原先按子面板名（Debugging/Main Menu）查找，子面板可能 inactive 且名称不唯一，`GameObject.Find` 时灵时不灵；改为关闭唯一且必为 active 的根容器 `SettingsMenuCanvas` |
+| 2026-06-19 | 双击恢复时设置菜单闪烁修复 | 代码完成，待运行复核 | 渲染时序差：关面板后用协程放行一帧（`yield null` + `WaitForEndOfFrame`）再隐藏窗口，避免窗口前缓冲区定格在带菜单旧帧 |

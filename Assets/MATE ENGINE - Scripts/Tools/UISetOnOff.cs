@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 
 public class UISetOnOff : MonoBehaviour
@@ -72,9 +73,22 @@ public class UISetOnOff : MonoBehaviour
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.isPlaying = false;
 #else
-        RemoveTaskbarApp.HideMainWindow();
+        StartCoroutine(HideAfterPanelClosed());
 #endif
     }
+
+#if !UNITY_EDITOR
+    private IEnumerator HideAfterPanelClosed()
+    {
+        // CloseSettingsPanel() 只是把 SettingsMenuCanvas 标记为 inactive，"设置面板已消失"
+        // 的画面尚未渲染到屏幕。若此刻立即隐藏窗口，前缓冲区会定格在仍带菜单的上一帧；
+        // 双击托盘恢复时会先显示这张旧帧、下一帧才刷新，于是看到设置菜单闪一下。
+        // 这里先放行一帧让无菜单画面渲染并呈现，再隐藏窗口，恢复时即为干净画面。
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        RemoveTaskbarApp.HideMainWindow();
+    }
+#endif
 
     private void CloseSettingsPanel()
     {
