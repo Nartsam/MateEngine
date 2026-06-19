@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-20（清理设置菜单滚动修复冗余变更 + 新增 ADR-0007）
+- 上次更新：2026-06-20（修正文档渲染管线表述 URP→Built-in；PMX 导入与渲染风格方案分析）
 
 ## 当前状态
 
@@ -30,13 +30,41 @@
 
 ## 正在处理
 
-- 暂无
+- PMX 模型导入与原神/崩坏/P5X 风格渲染方案：已完成现状核实与方案分析，待用户确认实施路线后再动代码。结论摘要：
+  - 实际渲染管线是 **Built-in**（非文档原先所写 URP），已修正 `Docs/ARCHITECTURE.md`。
+  - 工程已内置 UTS2（`MATE ENGINE - Packages/Toon/`）、Poiyomi、lilToon 等 Built-in NPR 卡通着色器。
+  - 用户接受离线预处理、模型数量少。推荐走 **Unity Editor 离线管线 → `.me`**：编辑器内导入 PMX（保留原始日文 MMD 形态键与物理）→ 配 Humanoid Avatar → MMD 物理转 DynamicBone（已在工程内）→ 用 UTS2/lilToon 还原 `.blend` 预设外观 → `MateEngine/ME Model Exporter` 打包 `.me` → 现有 `VRMLoader.LoadAssetBundleModel` 加载。该路线下载逻辑（动画控制器赋值、组件注入、舞蹈口型）全部复用现有实现。
+  - 关键依据：`AvatarDanceShapeConverter` 对带 MMD 形态键（まばたき/あ/い/う/え/お…）的模型走 `bypassForThisAvatar` 直驱路径，保留原始形态键即可让舞蹈口型原生工作——这正是之前 PMX→VRM 丢口型的根因。
+  - 里程碑：M1 解析器 → M2 Humanoid → M3 物理转 DynamicBone → M4 Blender 无头提取预设映射 UTS2/lilToon → M5 一键 batch + `.me` 打包。
+  - **M1a 已实测通过**：`Assets/Editor/PmxPipeline/`（PmxModel/PmxReader/MEPmxPipeline，纯编辑器程序集）batch 解析「特工丽塔/删披风删骨骼.pmx」成功——PMX2.0/UTF-16LE、26366 顶点、26 材质、268 骨骼、61 形态键（59 顶点 morph）、545 刚体（520 动态）、933 关节；**11/11 舞蹈口型形态键齐全**；材质用 `衣服a.png` 底色 + `mc1/mc3.png` sphere(matcap, blend=2)，正好对口 UTS2/lilToon。
+  - **M1b 已实测通过**（用户视觉验收）：`PmxMeshBuilder` 在编辑器构建 prefab+网格+骨架+59 BlendShape(日文名)+基础材质，输出 `Assets/PmxImported/丽塔/`。坐标转换坑：MMD→Unity 必须用 **180° 绕 Y（负 X 负 Z）+ 保持原缠绕**（纯旋转、无镜像）；最初误用负 Z 单轴=反射，导致左右镜像（刘海遮错眼）。MMD 默认缩放 0.08（约 1.56m）。已知点：少数表情（照れ 腮红等）在 MMD 是材质 morph 非顶点 morph，不会成为 BlendShape，待后续单独处理。
+  - **M2 已实测通过**（batch：avatar isValid/isHuman=True，53 骨骼映射，无左右互换报错）：`PmxHumanoid` 用 MMD 日文骨名→Humanoid 字典 + 手臂 A-pose→T-pose 归一化 + `AvatarBuilder.BuildHumanAvatar`。关键映射：**Hips=腰**（上半身/下半身 是 腰 的兄弟，腰 是脊柱与双腿唯一共同祖先；映射 Hips=下半身 会失败）。LowerArm=ひじ、Hand=手首（捩 twist 骨作为未映射中间骨保留）。生成 `丽塔_Avatar.asset` 并挂到 prefab 的 Animator。
+  - **M3 已 batch 构建**（待运行验证）：`PmxPhysics` 把 PMX 动态刚体(PhysicsMode≠0)按链根（父骨非动态的动态骨）转 DynamicBone（工程已内置，`m_Roots` 支持多链）。特工丽塔：3 个 DynamicBone 组件、37 条链（hair=9 / skirt=26 / breast=2），按 头发/裙子/胸/其他 分类套经验参数。v1 不加碰撞体（裙子可能穿腿），待后续。DynamicBone 仅运行时仿真，需 Play 模式或 App 验证。
+  - **M5 已 batch 导出**（待 App 运行验证）：`MEPmxPipeline.ExportMe` 复用 AssetBundle 打包逻辑把 prefab 连依赖打成 `.me`（排除 .cs，脚本在 player 解析）。产物 `Build/PmxModels/丽塔.me`（3MB，35 依赖）。加载路径核实：AvatarHandler 多用 `animator.GetBoneTransform`（humanoid），我们的 avatar 有效；舞蹈口型走 MMD 形态键 bypass；物理走 DynamicBone。VRM 专属眼球 LookAt（`Vrm10Instance`）会失效（非 VRM 模型），属可接受降级。
+  - **M5 首次运行验证发现 3 个问题，已诊断+修复（待复测）**。用 `DumpSkinning` 诊断坐实根因，未靠猜：
+    1. 腿不打弯/角色飘（我的转换 bug）：腿部蒙皮权重挂在 MMD「D」変形ボーン（左足D/右足D/ひざD/足首D，755/709/415... 顶点），这些骨骼仅靠 付与(inherit weight 1.0) 获得旋转、且是控制骨(足/ひざ/足首)的兄弟而非子级，引擎驱动控制骨时蒙皮不动→腿直。**修复**：`BuildSkinRemap` 把「付与源非自身祖先」的变形骨蒙皮权重重指到源控制骨（几何等价，D 覆盖控制骨），并向死分支传播（足先EX）。本模型重指 26 骨。捩(twist)骨因源是祖先、靠父子级跟随，不重指、无损失。
+    2. 拖动时部分服装固定在空间中/拉伸：受影响部位均为 DynamicBone 动态骨；`m_Inert` 0.3–0.5 过高导致拖动时布料滞留世界空间。**修复**：`m_Inert` 降到 ~0（裙 0、发 0.05），布料跟随身体、仅靠运动摆动。
+    3. 服装穿模：无碰撞体固有问题，**暂缓**（后续 M3.5 给腿/躯干加 DynamicBoneCollider）。
+  - **第二轮复测：腿已修复✓；新发现 口型不动 + 头发剧烈抖动，已修（待三测）**：
+    4. 口型/表情不动：`UniversalBlendshapes` 只驱动 VRM（VRMBlendShapeProxy/Vrm10），非 VRM 模型走 `AvatarDanceShapeConverter` 的 bypass，靠舞蹈片段按 transform 路径直驱形态键。引擎舞蹈片段把形态键曲线绑到 `Body` 路径（converter 的 candidatePaths={"Body","Model/Body","Face"}），而我们 SMR 在 root → 不命中。**修复**：把 SkinnedMeshRenderer 挂到 root 下的子物体 `Body`（骨架仍在 root）。⚠️注意：抽查的 3 个内置舞蹈片段都**没有**形态键曲线，若用户导入的舞蹈也无面部 morph 轨，任何模型侧修复都无法产生口型——需用确含 morph 的舞蹈验证。
+    5. 头发发梢剧烈抖动（欠阻尼振荡）：DynamicBone 参数过软。**修复**：大幅提高 m_Damping(发 0.6)/m_Stiffness(0.3)，降 elasticity，m_Inert 0.1-0.15。
+  - 穿模(碰撞体)与拖动粘连若复测仍在，再单独诊断/加碰撞体。
+  - **第三轮复测：口型已动✓、腿正常✓；粘连根因找到并修复，头发继续调**：
+    6. 粘连/拉伸（用户已用 PMX 编辑器删过飘带/下摆）：`DumpOrphans` 诊断出 **20 个 `衣饰` 顶点被权重到 `操作中心`(bone0，原点处不变形的视点骨)**，最大距骨 11.3u——是删除后残留几何被 PMX 编辑器重指到 bone0 的垃圾面，原点不跟身体动→粘连。**修复**：`FindOrphanVerts` 把主权重落在非变形骨（操作中心/IK）的顶点判为孤儿，构网格时丢弃含孤儿顶点的面（本模型丢 40 面）。属模型瑕疵，导入器自动兜底。
+    7. 头发上轮过僵→这轮反而过飘/幅度大/归位慢（欠刚度欠弹性、阻尼偏高）。再调：stiffness↑(发 0.55)、elasticity↑(0.25)、damping↓(0.3)。物理手感主观，建议改用 Play 模式实时调参再回填。
+  - 穿模仍需碰撞体（M3.5：给腿/躯干加 DynamicBoneCollider），尚未做。
+  - M4 工具：Blender 3.6 LTS（`D:\Program Files\Blender\3.6\blender.exe`）。5.0.1 也装了但其「模型预设导入.py」插件有路径对不上的兼容问题，故 M4 用 3.6。
 
 ## 下一步
 
 - 等待指定
 
 ## 已完成
+
+### 文档渲染管线表述修正
+
+- 核实工程实际运行在 **Built-in 渲染管线**：URP 包不在 `manifest.json`/`packages-lock.json`/`PackageCache`/嵌入包中；`GraphicsSettings`/`QualitySettings` 未指派任何 SRP；装的是 Built-in 后处理 Stack `com.unity.postprocessing 3.5.1`；默认角色 Zome 用 MToon 的 Built-in 变体。`Assets/Settings/` 下的 `PC_RPAsset` 等 URP 资产为惰性残留。
+- 修正 `Docs/ARCHITECTURE.md` 快速事实表、技术栈表、目录结构表中将渲染管线/着色器误标为 URP 的描述，并补注 UTS2 位置与 URP 残留资产说明；修正 `Docs/DECISIONS_RECORD.md` ADR-0005 中“URP 渲染问题”表述。
 
 ### Steam 依赖移除
 
@@ -170,3 +198,4 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-19 | 双击恢复时设置菜单闪烁修复 | 代码完成，待运行复核 | 渲染时序差：关面板后用协程放行一帧（`yield null` + `WaitForEndOfFrame`）再隐藏窗口，避免窗口前缓冲区定格在带菜单旧帧 |
 | 2026-06-20 | 移除 Discord / 设置菜单广告 / DLC 模型 | 静态复核完成，待运行复核 | 场景屏蔽 Discord 三对象 + 3 块推广 section（STEAM DLC/MINECRAFT/FOOD SYSTEM）；保留并收紧 `Image (11)` 作为 DEBUG 背景，仅屏蔽推广背景 `Image (12)`~`Image (14)`；ScrollRect 内容高度止于调试按钮底边，并改为 Clamped 防止底部弹性越界空白；清空 `AvatarLibraryMenu.dlcAvatars`，模型选项仅留 Built-in 与用户导入 VRM |
 | 2026-06-20 | 修复设置菜单滚动区空白（SettingsMenuScrollBoundsLimiter） | 代码完成，待构建/运行复核 | 根因：广告区移除后 VLG Bottom 4600 被 CSF PreferredSize 撑出 ~1000px 空白。最终方案：Limiter 运行时调整 VLG `padding.bottom` → CSF 自然适配 Content 高度。详见 `Docs/DECISIONS_RECORD.md` ADR-0007。 |
+| 2026-06-20 | 文档渲染管线表述修正（URP→Built-in） | 静态核实完成 | 多源证据确认实际为 Built-in；仅改文档，未动代码或工程设置 |

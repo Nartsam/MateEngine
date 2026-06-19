@@ -83,3 +83,7 @@ Assets/AssetStoreTools*
 .plastic/
 
 Assets/Example Avatar - USED FOR MATE ENGINE
+
+# PMX pipeline generated output (regenerate from PMX via MEPmxPipeline)
+Assets/PmxImported/
+Assets/PmxImported.meta

@@ -9,7 +9,7 @@
 | Unity | `6000.2.6f2`，必须精确匹配 |
 | 启动场景 | `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity` |
 | 主场景 | `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity` |
-| 渲染管线 | URP |
+| 渲染管线 | Built-in（内置渲染管线）。注意：`Assets/Settings/` 下存在 `PC_RPAsset`/`Mobile_RPAsset`/`UniversalRenderPipelineGlobalSettings` 等 URP 残留资产，但 URP 包并未安装（不在 `manifest.json`/`packages-lock.json`/`PackageCache`/嵌入包中），`GraphicsSettings`/`QualitySettings` 也未指派任何 SRP，因此实际运行在 Built-in。这些 URP 资产为惰性残留，不要据此误判为 URP。 |
 | 主要语言 | C# |
 | 构建目标 | Windows x86_64 |
 | 开发期构建 | Mono |
@@ -25,8 +25,8 @@
 | UniVRM / VRM10 | VRM 0.x / 1.x 模型加载 |
 | UniWindowController | 透明、置顶、桌面窗口控制 |
 | Newtonsoft.Json | 设置和数据 JSON 序列化 |
-| MToon (URP) | 默认卡通着色器 |
-| Poiyomi / lilToon | 可选高级 Shader，主要通过 Mod 或角色资源使用 |
+| MToon（Built-in 变体） | 默认 VRM 卡通着色器。默认角色 Zome 材质即使用 `Assets/MATE ENGINE - Packages/VRM/MToon/Shaders/MToon.shader`（Built-in 变体，非 URP 变体） |
+| UTS2 / Poiyomi / lilToon | 工程内已内置的 Built-in NPR 卡通着色器，可用于高级/原神风渲染。UTS2 位于 `Assets/MATE ENGINE - Packages/Toon/`（Unity-Chan Toon Shader 2），Poiyomi/lilToon 位于 `Assets/MATE ENGINE - Shaders/`。主要通过 Mod 或角色资源使用 |
 | LLMUnity / Qwen 2.5 1.5b | 可选本地 LLM 聊天 |
 | VRM SpringBone | 头发、衣物等物理摆动 |
 
@@ -43,7 +43,7 @@
 | `Assets/AddressableAssetsData/` | Addressables 配置和 Localization 资源分组 |
 | `Assets/LLMUnity/` | 本地 LLM 插件和运行时 |
 | `Assets/MATE ENGINE - Packages/` | 内置第三方 Unity 包 |
-| `Assets/MATE ENGINE - Shaders/` | MToon、Poiyomi、lilToon 等 Shader 资源 |
+| `Assets/MATE ENGINE - Shaders/` | Poiyomi、lilToon、Mochie 等 Shader 资源（MToon 在 `MATE ENGINE - Packages/VRM/MToon/`，UTS2 在 `MATE ENGINE - Packages/Toon/`） |
 | `Assets/Editor/` | 编辑器脚本，当前包含命令行构建脚本 |
 | `Packages/com.unity.addressables/` | 本地嵌入的 Addressables 包；运行时路径被 patch 为便携缓存 |
 | `ProjectSettings/` | Unity 项目设置 |
