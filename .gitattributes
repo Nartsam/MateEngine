@@ -20,6 +20,11 @@
 *.hlsl text eol=lf
 *.compute text eol=lf
 
+# lilToon is a vendored shader package that Unity rewrites with CRLF on Windows.
+# Keep repository blobs normalized, but let the working tree use CRLF to avoid
+# recurring false modified status from line-ending-only shader rewrites.
+"Assets/MATE ENGINE - Shaders/jp.lilxyzw.liltoon-1.8.5/Shader/*.shader" text eol=crlf
+
 # Unity serialized text assets
 *.meta text eol=lf
 *.unity text eol=lf

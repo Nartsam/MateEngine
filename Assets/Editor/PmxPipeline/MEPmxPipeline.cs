@@ -1,19 +1,15 @@
 // Batch entry points for the MateEngine PMX offline import pipeline.
 // See Docs/DECISIONS_RECORD.md ADR-0008.
-//
-// M1a (this file): parse a PMX and report its structure, to validate the parser
-// headless. Later milestones add mesh/Humanoid/physics/material/.me steps.
-//
-// Usage (headless):
-//   Unity.exe -batchmode -quit -projectPath <proj> \
-//       -executeMethod MateEngine.PmxPipeline.MEPmxPipeline.ValidateParse \
-//       -pmx "<path-to>.pmx"
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
+using Process = System.Diagnostics.Process;
+using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 namespace MateEngine.PmxPipeline
 {
@@ -28,108 +24,237 @@ namespace MateEngine.PmxPipeline
             return null;
         }
 
-        [MenuItem("MateEngine/PMX Pipeline/Validate Parse (test model)")]
+        [MenuItem("MateEngine/PMX Pipeline/Validate Parse (local settings)")]
         public static void ValidateParseMenu()
         {
-            const string testPmx = @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
-            Report(testPmx);
+            ValidateParseInternal(PmxPipelineOptions.FromCommandLine());
         }
 
-        // Batch-callable: -executeMethod ...ValidateParse  (reads -pmx arg, falls back to test model)
+        // Batch-callable: -executeMethod ...ValidateParse  -pmx <path>
         public static void ValidateParse()
         {
-            string path = GetArg("-pmx") ?? @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
-            bool ok = Report(path);
+            bool ok = ValidateParseInternal(PmxPipelineOptions.FromCommandLine());
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
-        [MenuItem("MateEngine/PMX Pipeline/Build Model (test model)")]
+        [MenuItem("MateEngine/PMX Pipeline/Build Model (local settings)")]
         public static void BuildModelMenu()
         {
-            const string testPmx = @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
-            BuildInternal(testPmx, PmxMeshBuilder.DefaultScale);
+            BuildInternal(PmxPipelineOptions.FromCommandLine(), out _);
         }
 
-        // Batch-callable: -executeMethod ...BuildModel  (args: -pmx <path> [-scale <f>])
+        // Batch-callable:
+        //   -executeMethod ...BuildModel -pmx <path> [-preset <blend>] [-blender <exe>]
+        //       [-scale <f>] [-outputRoot <assetFolder>] [-modelName <name>]
         public static void BuildModel()
         {
-            string path = GetArg("-pmx") ?? @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
-            float scale = float.TryParse(GetArg("-scale"), out var s) ? s : PmxMeshBuilder.DefaultScale;
-            bool ok = BuildInternal(path, scale);
+            bool ok = BuildInternal(PmxPipelineOptions.FromCommandLine(), out _);
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
-        private static bool BuildInternal(string pmxPath, float scale)
+        // Batch-callable:
+        //   -executeMethod ...BuildAndExport -pmx <path> [-preset <blend>] [-blender <exe>] [-out <file.me>]
+        public static void BuildAndExport()
+        {
+            var options = PmxPipelineOptions.FromCommandLine();
+            bool ok = BuildInternal(options, out var result)
+                   && ExportInternal(options, result.PrefabPath, out _);
+            if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+        }
+
+        // ===== Legacy `.me` export (RETAINED, not deleted) =====
+        // 用途：把构建好的 prefab 连同贴图/材质/着色器打包成单文件 `.me`(ZIP 内含 AssetBundle)，
+        // 走 App 现有 `.me` 加载链直接显示；自带渲染，不依赖 App 侧风格系统。
+        //
+        // 架构演进：主产物正转向通用 VRM + App 内置可切换渲染风格(见 Docs/RENDER_STYLE_DESIGN.md
+        // 与 ADR-0009)。本 `.me` 路径**保留为可选/兼容**，VRM 导出落地前它仍是唯一可用产物，
+        // 故此处不屏蔽；不要删除。完整流程见 Docs/PMX_TO_VRM.md。
+        //
+        // 实现时踩过的坑 + 解决：
+        //  1) AssetBundle 不能含 C# 脚本——脚本对玩家程序集解析；ExportInternal 里依赖收集已排除 .cs。
+        //  2) 着色器变体剥离：UTS2/lilToon 打进 bundle 后若变体被剥离会渲染成粉红；
+        //     需 Always Included Shaders / shader variant collection 兜底(实施 VRM 前如继续用 .me 需复核)。
+        //  3) Addressables content 重建副作用：导出过程可能顺带删除
+        //     Assets/AddressableAssetsData/link.xml；提交前需 git 还原该文件。
+        //  4) 导出文件名被本机 settings 的 modelName/exportPath 钉死，曾导致输出名为
+        //     丽塔_m4_stylized.me 而非预期名；用 -out 显式指定或清理本机配置可控。
+        //
+        // Batch-callable: pack a built prefab into a .me AssetBundle (M5).
+        //   -executeMethod ...ExportMe [-prefab <assetPath>] [-out <file.me>]
+        public static void ExportMe()
+        {
+            var options = PmxPipelineOptions.FromCommandLine();
+            bool ok = ExportInternal(options, options.PrefabPath, out _);
+            if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+        }
+
+        private static bool ValidateParseInternal(PmxPipelineOptions options)
         {
             try
             {
-                var model = new PmxReader().ReadFile(pmxPath);
-                var result = PmxMeshBuilder.Build(model, pmxPath, scale, "Assets/PmxImported");
-                Debug.Log($"[MEPmxPipeline] Built '{result.Prefab.name}' -> {result.OutputFolder}/{result.Prefab.name}.prefab\n" +
-                          $"  bones={result.BoneCount} submeshes={result.SubMeshCount} blendshapes={result.BlendShapeCount}\n" +
-                          $"  humanoid: valid={result.AvatarValid} mappedBones={result.MappedBoneCount}");
-                return result.Prefab != null;
+                return Report(options.RequirePmxPath());
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                Debug.LogError($"[MEPmxPipeline] Build failed for '{pmxPath}': {ex}");
+                Debug.LogError($"[MEPmxPipeline] ValidateParse failed: {ex.Message}");
                 return false;
             }
         }
 
-        // Batch-callable: pack a built prefab into a .me AssetBundle (M5).
-        //   -executeMethod ...ExportMe  [-prefab <assetPath>] [-out <file.me>]
-        public static void ExportMe()
+        private static bool BuildInternal(PmxPipelineOptions options, out PmxBuildResult result)
         {
-            string prefabPath = GetArg("-prefab") ?? @"Assets/PmxImported/丽塔/丽塔.prefab";
-            bool ok = ExportInternal(prefabPath, GetArg("-out"));
-            if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
-        }
-
-        private static bool ExportInternal(string prefabPath, string outPath)
-        {
+            result = null;
             try
             {
+                string pmxPath = options.RequirePmxPath();
+                var renderPreset = LoadRenderPreset(options);
+                var model = new PmxReader().ReadFile(pmxPath);
+
+                string modelName = options.ResolveModelName(model, pmxPath);
+                string stylePath = options.ResolveAndLoadStyle(modelName);
+                Debug.Log(options.Style != null
+                    ? $"[MEPmxPipeline] Loaded style config: {stylePath} (profile={options.Style.materialProfile})"
+                    : $"[MEPmxPipeline] No style config at {stylePath}; using code defaults.");
+
+                result = PmxMeshBuilder.Build(model, pmxPath, options, renderPreset);
+                options.SaveLastBuild(result.PrefabPath);
+                Debug.Log($"[MEPmxPipeline] Built '{result.Prefab.name}' -> {result.PrefabPath}\n" +
+                          $"  bones={result.BoneCount} submeshes={result.SubMeshCount} blendshapes={result.BlendShapeCount}\n" +
+                          $"  humanoid: valid={result.AvatarValid} mappedBones={result.MappedBoneCount}");
+                return result.Prefab != null;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MEPmxPipeline] Build failed: {ex}");
+                return false;
+            }
+        }
+
+        private static PmxRenderPreset LoadRenderPreset(PmxPipelineOptions options)
+        {
+            if (!options.HasPreset) return null;
+
+            options.ValidatePresetInputs();
+            string jsonPath = options.ResolveRenderPresetJsonPath();
+            if (!RunBlenderPresetDump(options, jsonPath))
+                throw new InvalidOperationException("Blender render preset dump failed.");
+
+            var preset = PmxRenderPreset.Load(jsonPath);
+            if (preset == null)
+                throw new InvalidOperationException($"Render preset JSON could not be read: {jsonPath}");
+
+            Debug.Log($"[MEPmxPipeline] Loaded render preset: materials={preset.materials?.Count ?? 0} source={preset.sourceBlendName}");
+            return preset;
+        }
+
+        private static bool RunBlenderPresetDump(PmxPipelineOptions options, string jsonPath)
+        {
+            string scriptPath = options.ResolveBlenderDumpScriptPath();
+            if (!File.Exists(scriptPath))
+            {
+                Debug.LogError($"[MEPmxPipeline] Blender dump script not found: {scriptPath}");
+                return false;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(jsonPath));
+            string textureRoot = Path.Combine(Path.GetDirectoryName(jsonPath), "pmx_render_preset_textures");
+            if (Directory.Exists(textureRoot)) Directory.Delete(textureRoot, true);
+            Directory.CreateDirectory(textureRoot);
+            var psi = new ProcessStartInfo
+            {
+                FileName = options.BlenderPath,
+                Arguments = "--background --factory-startup --disable-autoexec --python " + Quote(scriptPath) +
+                            " -- --preset " + Quote(options.PresetPath) + " --out " + Quote(jsonPath) +
+                            " --texture-root " + Quote(textureRoot),
+                WorkingDirectory = PmxPipelineOptions.ProjectRoot,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
+            using var process = new Process { StartInfo = psi };
+            process.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.AppendLine(e.Data); };
+            process.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            if (!process.WaitForExit(120000))
+            {
+                try { process.Kill(); } catch { }
+                Debug.LogError("[MEPmxPipeline] Blender dump timed out.");
+                return false;
+            }
+            process.WaitForExit();
+
+            if (stdout.Length > 0) Debug.Log(stdout.ToString().Trim());
+            if (stderr.Length > 0) Debug.LogWarning(stderr.ToString().Trim());
+            if (process.ExitCode != 0)
+            {
+                Debug.LogError($"[MEPmxPipeline] Blender dump exited with code {process.ExitCode}");
+                return false;
+            }
+
+            return File.Exists(jsonPath);
+        }
+
+        private static string Quote(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
+        private static bool ExportInternal(PmxPipelineOptions options, string prefabPath, out string exportedPath)
+        {
+            exportedPath = null;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(prefabPath))
+                {
+                    Debug.LogError("[MEPmxPipeline] Prefab path is required. Pass -prefab <assetPath>, run BuildAndExport, or set local settings.");
+                    return false;
+                }
+
+                prefabPath = PmxPipelineOptions.ToProjectRelativeAssetPath(prefabPath);
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                 if (prefab == null) { Debug.LogError($"[MEPmxPipeline] Prefab not found: {prefabPath}"); return false; }
 
-                string name = System.IO.Path.GetFileNameWithoutExtension(prefabPath);
+                string name = Path.GetFileNameWithoutExtension(prefabPath);
                 // Bundle every dependency except C# scripts (scripts resolve against the player).
                 var deps = AssetDatabase.GetDependencies(prefabPath, true)
                     .Where(p => !string.IsNullOrEmpty(p) && !p.EndsWith(".cs")).ToArray();
 
-                string tempDir = "TempPmxBundle";
-                if (System.IO.Directory.Exists(tempDir)) System.IO.Directory.Delete(tempDir, true);
-                System.IO.Directory.CreateDirectory(tempDir);
+                string tempDir = options.ResolveTempRoot();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+                Directory.CreateDirectory(tempDir);
 
                 var build = new AssetBundleBuild { assetBundleName = name, assetNames = deps };
                 BuildPipeline.BuildAssetBundles(tempDir, new[] { build },
                     BuildAssetBundleOptions.ChunkBasedCompression, EditorUserBuildSettings.activeBuildTarget);
 
-                string built = System.IO.Path.Combine(tempDir, name);
-                if (string.IsNullOrEmpty(outPath))
-                {
-                    string dir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "PmxModels");
-                    System.IO.Directory.CreateDirectory(dir);
-                    outPath = System.IO.Path.Combine(dir, name + ".me");
-                }
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(outPath));
-                System.IO.File.Copy(built, outPath, true);
-                System.IO.Directory.Delete(tempDir, true);
+                string built = Path.Combine(tempDir, name);
+                string outPath = options.ResolveDefaultOutPath(prefabPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(outPath));
+                File.Copy(built, outPath, true);
+                Directory.Delete(tempDir, true);
 
+                exportedPath = outPath;
+                options.SaveLastBuild(prefabPath, outPath);
                 Debug.Log($"[MEPmxPipeline] Exported .me -> {outPath}  (deps={deps.Length})");
                 return true;
             }
-            catch (System.Exception ex) { Debug.LogError($"[MEPmxPipeline] Export failed: {ex}"); return false; }
+            catch (Exception ex) { Debug.LogError($"[MEPmxPipeline] Export failed: {ex}"); return false; }
         }
 
         // Batch-callable: diagnose skinning vs inheritance/physics -> Logs/pmx_skin.txt
         public static void DumpSkinning()
         {
-            string path = GetArg("-pmx") ?? @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
             bool ok = true;
             try
             {
+                var options = PmxPipelineOptions.FromCommandLine();
+                string path = options.RequirePmxPath();
                 var model = new PmxReader().ReadFile(path);
                 int nb = model.Bones.Count;
                 var vcount = new int[nb];
@@ -152,11 +277,11 @@ namespace MateEngine.PmxPipeline
                         ? $"{b.InheritParentIndex}:{model.Bones[b.InheritParentIndex].NameLocal}({b.InheritWeight:0.##})" : "-";
                     sb.AppendLine($"{i}\t{vcount[i]}\t{b.NameLocal}\t{ir}\t{it}\t{src}\t{dyn.Contains(i)}");
                 }
-                string outPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Logs", "pmx_skin.txt");
-                System.IO.File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
+                string outPath = Path.Combine(PmxPipelineOptions.NormalizeProjectDirectory(options.LogsRoot), "pmx_skin.txt");
+                File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
                 Debug.Log($"[MEPmxPipeline] Dumped skinning ({order.Count()} skinned bones) -> {outPath}");
             }
-            catch (System.Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpSkinning failed: {ex}"); ok = false; }
+            catch (Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpSkinning failed: {ex}"); ok = false; }
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
@@ -164,11 +289,12 @@ namespace MateEngine.PmxPipeline
         // typically left behind by incomplete deletion in a PMX editor). -> Logs/pmx_orphans.txt
         public static void DumpOrphans()
         {
-            string path = GetArg("-pmx") ?? @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
             float threshold = float.TryParse(GetArg("-dist"), out var d) ? d : 3.0f; // MMD units
             bool ok = true;
             try
             {
+                var options = PmxPipelineOptions.FromCommandLine();
+                string path = options.RequirePmxPath();
                 var model = new PmxReader().ReadFile(path);
                 int nb = model.Bones.Count;
 
@@ -208,21 +334,22 @@ namespace MateEngine.PmxPipeline
                     string mat = kv.Value.matSample >= 0 && kv.Value.matSample < model.Materials.Count ? model.Materials[kv.Value.matSample].NameLocal : "?";
                     sb.AppendLine($"{kv.Key}:{model.Bones[kv.Key].NameLocal}\t{kv.Value.count}\t{kv.Value.maxDist:0.0}\t{mat}\t{dyn.Contains(kv.Key)}");
                 }
-                string outPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Logs", "pmx_orphans.txt");
-                System.IO.File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
+                string outPath = Path.Combine(PmxPipelineOptions.NormalizeProjectDirectory(options.LogsRoot), "pmx_orphans.txt");
+                File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
                 Debug.Log($"[MEPmxPipeline] Orphan scan: {orphanTotal} verts beyond {threshold}u -> {outPath}");
             }
-            catch (System.Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpOrphans failed: {ex}"); ok = false; }
+            catch (Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpOrphans failed: {ex}"); ok = false; }
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
         // Batch-callable: dump full bone hierarchy to Logs/pmx_bones.txt for M2 mapping design.
         public static void DumpSkeleton()
         {
-            string path = GetArg("-pmx") ?? @"D:\Program Files\MMD\MateEngine\models\特工丽塔\删披风删骨骼.pmx";
             bool ok = true;
             try
             {
+                var options = PmxPipelineOptions.FromCommandLine();
+                string path = options.RequirePmxPath();
                 var model = new PmxReader().ReadFile(path);
                 var sb = new StringBuilder();
                 sb.AppendLine($"# {model.Bones.Count} bones from {path}");
@@ -233,11 +360,11 @@ namespace MateEngine.PmxPipeline
                         ? $"{b.ParentIndex}:{model.Bones[b.ParentIndex].NameLocal}" : "-1:(root)";
                     sb.AppendLine($"{i}\t{b.NameLocal}\t<{b.NameUniversal}>\tparent={parent}\tik={b.Has(PmxBoneFlags.IK)}");
                 }
-                string outPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Logs", "pmx_bones.txt");
-                System.IO.File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
+                string outPath = Path.Combine(PmxPipelineOptions.NormalizeProjectDirectory(options.LogsRoot), "pmx_bones.txt");
+                File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false));
                 Debug.Log($"[MEPmxPipeline] Dumped {model.Bones.Count} bones -> {outPath}");
             }
-            catch (System.Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpSkeleton failed: {ex}"); ok = false; }
+            catch (Exception ex) { Debug.LogError($"[MEPmxPipeline] DumpSkeleton failed: {ex}"); ok = false; }
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
@@ -277,9 +404,9 @@ namespace MateEngine.PmxPipeline
                 foreach (var mat in model.Materials)
                 {
                     string tex = mat.TextureIndex >= 0 && mat.TextureIndex < model.TexturePaths.Count
-                        ? System.IO.Path.GetFileName(model.TexturePaths[mat.TextureIndex]) : "(none)";
+                        ? Path.GetFileName(model.TexturePaths[mat.TextureIndex]) : "(none)";
                     string sph = mat.EnvironmentIndex >= 0 && mat.EnvironmentIndex < model.TexturePaths.Count
-                        ? System.IO.Path.GetFileName(model.TexturePaths[mat.EnvironmentIndex]) : "(none)";
+                        ? Path.GetFileName(model.TexturePaths[mat.EnvironmentIndex]) : "(none)";
                     sb.AppendLine($"  [{mat.NameLocal}] tris={mat.SurfaceCount / 3} tex={tex} sphere={sph} blend={mat.EnvironmentBlendMode} toonRef={mat.ToonReference}");
                 }
 

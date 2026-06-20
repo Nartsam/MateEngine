@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-20（修正文档渲染管线表述 URP→Built-in；PMX 导入与渲染风格方案分析）
+- 上次更新：2026-06-20（PMX 渲染转向"通用 VRM + App 内置风格"架构 ADR-0009；文档去冗余、沉淀避坑指南、删除 HANDOFF）
 
 ## 当前状态
 
@@ -30,7 +30,7 @@
 
 ## 正在处理
 
-- PMX 模型导入与原神/崩坏/P5X 风格渲染方案：已完成现状核实与方案分析，待用户确认实施路线后再动代码。结论摘要：
+- PMX 模型导入与原神/崩坏/P5X 风格渲染离线管线正在贯通。当前结论与状态：
   - 实际渲染管线是 **Built-in**（非文档原先所写 URP），已修正 `Docs/ARCHITECTURE.md`。
   - 工程已内置 UTS2（`MATE ENGINE - Packages/Toon/`）、Poiyomi、lilToon 等 Built-in NPR 卡通着色器。
   - 用户接受离线预处理、模型数量少。推荐走 **Unity Editor 离线管线 → `.me`**：编辑器内导入 PMX（保留原始日文 MMD 形态键与物理）→ 配 Humanoid Avatar → MMD 物理转 DynamicBone（已在工程内）→ 用 UTS2/lilToon 还原 `.blend` 预设外观 → `MateEngine/ME Model Exporter` 打包 `.me` → 现有 `VRMLoader.LoadAssetBundleModel` 加载。该路线下载逻辑（动画控制器赋值、组件注入、舞蹈口型）全部复用现有实现。
@@ -52,12 +52,16 @@
   - **第三轮复测：口型已动✓、腿正常✓；粘连根因找到并修复，头发继续调**：
     6. 粘连/拉伸（用户已用 PMX 编辑器删过飘带/下摆）：`DumpOrphans` 诊断出 **20 个 `衣饰` 顶点被权重到 `操作中心`(bone0，原点处不变形的视点骨)**，最大距骨 11.3u——是删除后残留几何被 PMX 编辑器重指到 bone0 的垃圾面，原点不跟身体动→粘连。**修复**：`FindOrphanVerts` 把主权重落在非变形骨（操作中心/IK）的顶点判为孤儿，构网格时丢弃含孤儿顶点的面（本模型丢 40 面）。属模型瑕疵，导入器自动兜底。
     7. 头发上轮过僵→这轮反而过飘/幅度大/归位慢（欠刚度欠弹性、阻尼偏高）。再调：stiffness↑(发 0.55)、elasticity↑(0.25)、damping↓(0.3)。物理手感主观，建议改用 Play 模式实时调参再回填。
-  - 穿模仍需碰撞体（M3.5：给腿/躯干加 DynamicBoneCollider），尚未做。
-  - M4 工具：Blender 3.6 LTS（`D:\Program Files\Blender\3.6\blender.exe`）。5.0.1 也装了但其「模型预设导入.py」插件有路径对不上的兼容问题，故 M4 用 3.6。
+  - **M3.5 已代码完成并 batch 导出（待 App 运行复测）**：`PmxPhysics` 在 Humanoid Avatar/Animator 可用时，按腿部与髋部骨骼自动生成裙摆专用 `DynamicBoneCollider`，碰撞体作为对应骨骼的子物体随动画运动。第三轮根据“下摆被撑起、头发被顶起/穿模”的截图修正过强问题：碰撞体只绑定到 Skirt 类 DynamicBone，Hair/Breast/Other 不再吃身体碰撞；移除横向髋部胶囊和胸/上身胶囊，保留更保守的大腿/小腿/髋/骨盆共 6 个碰撞体；裙摆粒子半径降为 `0.012`。Unity batch 已重新生成特工丽塔 prefab，并导出 `Build/PmxModels/丽塔.me`；仍需在 App 内加载验证裙摆/头发状态。
+  - `.gitattributes` 已给 vendored lilToon shader 路径增加 `text eol=crlf` 例外：仓库 blob 仍规范化，Windows 工作树允许 CRLF，避免 Unity/包文件反复产生 shader 换行假脏。
+  - **M4 渲染（UTS2 路线，多轮调试）已封存，根因沉淀进避坑指南**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因——这些失败/中间尝试的现象与解法已统一记入 `Docs/PMX_TO_VRM.md` §8 避坑指南，不在此展开。
+  - **风格解耦（已完成）**：`PmxStyleConfig`（`Tools/PmxPipeline/styles/<模型>.style.json`）把材质风格调参从 C# 移到逐模型 JSON（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength` + 逐材质覆盖），支持"改 JSON 重跑"与"Editor 实时调 `*.mat`"两种不重编译的迭代循环（见 `Docs/ARCHITECTURE.md`）。
+  - **架构转向 VRM（ADR-0009，待实施）**：终点目标=逼近 HoYo 原效果 + 通用性。决定改为「**通用 VRM 模型 + App 内置可切换渲染风格（含仿 HoYo）**」：渲染风格从烘进 `.me` 转为 App 运行时套用、可切换；物理改 VRM SpringBone；HoYo 贴图打包进 VRM。设计见 `Docs/RENDER_STYLE_DESIGN.md`，端到端操作流程见 `Docs/PMX_TO_VRM.md`。
 
 ## 下一步
 
-- 等待指定
+- 按 `Docs/RENDER_STYLE_DESIGN.md` 分阶段实施 VRM + App 渲染风格：N0 验证 HoyoToon HI3（Built-in + Unity6 编译/单材质效果）→ N1 RenderStyleManager 接入点原型 → N2 `hoyo_hi3` 风格 → N3 PMX→VRM 导出（SpringBone + 打包 HoYo 贴图）→ N4 设置 UI（一般组/画质下方）→ N5 后处理接通。
+- `.me` 路径保留为兼容（不删除，代码已加用途/踩坑注释），VRM 落地前仍是可用产物。
 
 ## 已完成
 
@@ -199,3 +203,8 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-20 | 移除 Discord / 设置菜单广告 / DLC 模型 | 静态复核完成，待运行复核 | 场景屏蔽 Discord 三对象 + 3 块推广 section（STEAM DLC/MINECRAFT/FOOD SYSTEM）；保留并收紧 `Image (11)` 作为 DEBUG 背景，仅屏蔽推广背景 `Image (12)`~`Image (14)`；ScrollRect 内容高度止于调试按钮底边，并改为 Clamped 防止底部弹性越界空白；清空 `AvatarLibraryMenu.dlcAvatars`，模型选项仅留 Built-in 与用户导入 VRM |
 | 2026-06-20 | 修复设置菜单滚动区空白（SettingsMenuScrollBoundsLimiter） | 代码完成，待构建/运行复核 | 根因：广告区移除后 VLG Bottom 4600 被 CSF PreferredSize 撑出 ~1000px 空白。最终方案：Limiter 运行时调整 VLG `padding.bottom` → CSF 自然适配 Content 高度。详见 `Docs/DECISIONS_RECORD.md` ADR-0007。 |
 | 2026-06-20 | 文档渲染管线表述修正（URP→Built-in） | 静态核实完成 | 多源证据确认实际为 Built-in；仅改文档，未动代码或工程设置 |
+| 2026-06-20 | PMX M3.5 服装碰撞体 | batch 生成/导出通过，待 App 运行复测 | 第三轮收敛过强碰撞：Skirt 专用下半身碰撞体，Hair/Breast/Other 不绑定身体碰撞；`components=3 chains=37 colliders=6`，裙摆粒子半径 `0.012`；`ExportMe` 已更新 `Build/PmxModels/丽塔.me` |
+| 2026-06-20 | lilToon shader 换行假脏修复 | 静态验证完成 | `.gitattributes` 为 `Assets/MATE ENGINE - Shaders/jp.lilxyzw.liltoon-1.8.5/Shader/*.shader` 增加 `text eol=crlf` 路径级例外，`git check-attr` 验证命中 |
+| 2026-06-20 | PMX M4 渲染（UTS2 路线，多轮） | 已封存，转 VRM 架构（ADR-0009） | 多轮 App 验收逐一定位并修复发紫/脸碎裂/偏暗偏素/后处理失效等根因；现象与解法详见 `Docs/PMX_TO_VRM.md` §8 避坑指南。风格调参已解耦为 `PmxStyleConfig` 逐模型 JSON |
+| 2026-06-20 | 渲染风格架构设计 + 风格解耦 | 文档完成（ADR-0009 Proposed），代码待 N0 起 | 决策"通用 VRM + App 内置可切换渲染风格"：`Docs/RENDER_STYLE_DESIGN.md`、`Docs/PMX_TO_VRM.md` runbook；`PmxStyleConfig` 解耦落地；`.me` 导出加用途/踩坑注释保留 |
+| 2026-06-20 | lilToon shader 换行假脏 index 清理 | 已完成 | `git add --renormalize` 配合 `.gitattributes` 的 `eol=crlf` 例外，消除 58 个 vendored lilToon shader 的 index 行尾 mismatch；`git status` 不再显示该批假脏 |

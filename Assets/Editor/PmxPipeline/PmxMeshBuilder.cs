@@ -1,5 +1,5 @@
-// M1b: build a Unity GameObject (skinned mesh + skeleton + blendshapes + basic
-// materials) from a parsed PmxModel, and persist it as a prefab + assets.
+// M1b/M4: build a Unity GameObject (skinned mesh + skeleton + blendshapes +
+// UTS2 toon materials) from a parsed PmxModel, and persist it as a prefab + assets.
 //
 // Coordinate conversion (MMD -> Unity): 180° rotation about Y = negate X and Z on
 // positions/normals, keeping original triangle winding. This is a proper rotation
@@ -8,10 +8,10 @@
 // model — e.g. bangs ending up on the wrong eye.) Vertices AND bone bind transforms
 // use the SAME conversion, so skinning stays consistent.
 //
-// Materials here are intentionally basic (textured) — full NPR (UTS2/lilToon)
-// replication is M4. Humanoid avatar is M2, physics is M3.
+// Humanoid avatar is M2, physics is M3/M3.5, preset-driven NPR material mapping is M4.
 //
 // Part of the MateEngine PMX offline import pipeline. See Docs/DECISIONS_RECORD.md ADR-0008.
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -24,9 +24,11 @@ namespace MateEngine.PmxPipeline
     {
         public GameObject Prefab;
         public string OutputFolder;
+        public string PrefabPath;
         public int BoneCount, BlendShapeCount, SubMeshCount;
         public bool AvatarValid;
         public int MappedBoneCount;
+        public PmxMaterialBuildStats MaterialStats;
     }
 
     public static class PmxMeshBuilder
@@ -37,18 +39,19 @@ namespace MateEngine.PmxPipeline
         private static Vector3 Conv(Vector3 v, float s) => new(-v.x * s, v.y * s, -v.z * s);
         private static Vector3 ConvDir(Vector3 v) => new(-v.x, v.y, -v.z);
 
-        public static PmxBuildResult Build(PmxModel model, string pmxPath, float scale, string outputRoot)
+        public static PmxBuildResult Build(PmxModel model, string pmxPath, PmxPipelineOptions options, PmxRenderPreset renderPreset)
         {
-            string modelName = SanitizeName(string.IsNullOrEmpty(model.NameUniversal) ? model.NameLocal : model.NameUniversal);
-            if (string.IsNullOrEmpty(modelName)) modelName = Path.GetFileNameWithoutExtension(pmxPath);
+            float scale = options.Scale;
+            string modelName = options.ResolveModelName(model, pmxPath);
 
-            string outFolder = $"{outputRoot}/{modelName}";
+            string outFolder = $"{options.OutputRoot}/{modelName}";
             EnsureAssetFolder(outFolder);
 
             string pmxDir = Path.GetDirectoryName(pmxPath);
 
             // --- textures ---------------------------------------------------------
             var texAssets = ImportTextures(model, pmxDir, outFolder);
+            ImportPresetTextures(renderPreset, options.PresetPath, outFolder, texAssets);
 
             // --- skeleton (must exist before bindposes) --------------------------
             var root = new GameObject(modelName);
@@ -97,7 +100,12 @@ namespace MateEngine.PmxPipeline
             mesh.bindposes = bindposes;
 
             // --- materials --------------------------------------------------------
-            var mats = BuildMaterials(model, texAssets, outFolder);
+            var mats = PmxMaterialMapper.BuildMaterials(model, texAssets, outFolder, renderPreset, options.MatchMode, options.Style);
+            var matStats = PmxMaterialMapper.LastStats;
+            Debug.Log($"[PmxBuilder] Materials: total={matStats.Total} uts2={matStats.Uts2} " +
+                      $"transClipping={matStats.TransClipping} matcap={matStats.Matcap} " +
+                      $"highColor={matStats.HighColor} rim={matStats.Rim} outline={matStats.Outline} " +
+                      $"presetMatches={matStats.PresetMatches} fallback={matStats.StandardFallbacks}");
 
             // --- skinned renderer -------------------------------------------------
             var smr = bodyGo.AddComponent<SkinnedMeshRenderer>();
@@ -123,14 +131,17 @@ namespace MateEngine.PmxPipeline
             }
 
             // --- physics (M3): PMX rigid bodies/joints -> DynamicBone chains ----------
-            var physics = PmxPhysics.Build(model, root.transform, boneTf);
+            var physics = PmxPhysics.Build(model, root.transform, boneTf, animator);
             Debug.Log($"[PmxBuilder] DynamicBone: components={physics.DynamicBones} chains={physics.ChainRoots} " +
+                      $"colliders={physics.Colliders} " +
                       $"(hair={physics.Hair} skirt={physics.Skirt} breast={physics.Breast} other={physics.Other})");
+
+            AddRenderProfile(root, renderPreset);
 
             // --- persist prefab ---------------------------------------------------
             string prefabPath = $"{outFolder}/{modelName}.prefab";
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
-            Object.DestroyImmediate(root);
+            UnityEngine.Object.DestroyImmediate(root);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
@@ -138,11 +149,13 @@ namespace MateEngine.PmxPipeline
             {
                 Prefab = prefab,
                 OutputFolder = outFolder,
+                PrefabPath = prefabPath,
                 BoneCount = model.Bones.Count,
                 BlendShapeCount = mesh.blendShapeCount,
                 SubMeshCount = mesh.subMeshCount,
                 AvatarValid = humanoid.Valid,
-                MappedBoneCount = humanoid.Mapped.Count
+                MappedBoneCount = humanoid.Mapped.Count,
+                MaterialStats = matStats
             };
         }
 
@@ -297,6 +310,13 @@ namespace MateEngine.PmxPipeline
                 {
                     File.Copy(src, destAbs, true);
                     AssetDatabase.ImportAsset(destAsset, ImportAssetOptions.ForceUpdate);
+                    if (AssetImporter.GetAtPath(destAsset) is TextureImporter importer)
+                    {
+                        importer.textureType = TextureImporterType.Default;
+                        importer.sRGBTexture = true;
+                        importer.alphaIsTransparency = true;
+                        importer.SaveAndReimport();
+                    }
                     var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(destAsset);
                     if (tex != null) result[i] = tex;
                 }
@@ -305,27 +325,140 @@ namespace MateEngine.PmxPipeline
             return result;
         }
 
-        private static Material[] BuildMaterials(PmxModel model, Dictionary<int, Texture2D> tex, string outFolder)
+        private static void ImportPresetTextures(PmxRenderPreset preset, string presetPath, string outFolder,
+            Dictionary<int, Texture2D> result)
         {
-            // Basic Built-in Standard material per PMX material (NPR is M4).
-            var standard = Shader.Find("Standard");
-            var mats = new Material[model.Materials.Count];
-            var used = new HashSet<string>();
-            for (int i = 0; i < model.Materials.Count; i++)
-            {
-                var pm = model.Materials[i];
-                string matName = SanitizeName(pm.NameLocal);
-                if (string.IsNullOrEmpty(matName)) matName = $"mat_{i}";
-                while (!used.Add(matName)) matName += "_";
+            if (preset == null || preset.materials == null || string.IsNullOrWhiteSpace(presetPath)) return;
+            string presetDir = Path.GetDirectoryName(presetPath);
+            if (string.IsNullOrWhiteSpace(presetDir) || !Directory.Exists(presetDir)) return;
 
-                var mat = new Material(standard) { name = matName, color = pm.Diffuse };
-                if (pm.TextureIndex >= 0 && tex.TryGetValue(pm.TextureIndex, out var t))
-                    mat.mainTexture = t;
-                // Many MMD materials are double-sided / cutout; leave defaults for M1b.
-                AssetDatabase.CreateAsset(mat, $"{outFolder}/{matName}.mat");
-                mats[i] = mat;
+            var candidates = new HashSet<string>();
+            foreach (var material in preset.materials)
+            {
+                if (material == null) continue;
+                AddTextureCandidate(candidates, material.baseTexture);
+                AddTextureCandidate(candidates, material.shadeTexture);
+                AddTextureCandidate(candidates, material.matcapTexture);
+                AddTextureCandidate(candidates, material.emissionTexture);
+                AddTextureCandidate(candidates, material.highColorTexture);
+                AddTextureCandidate(candidates, material.highColorMaskTexture);
+                AddTextureCandidate(candidates, material.maskTexture);
+                AddTextureCandidate(candidates, material.toonTexture);
+                if (material.images == null) continue;
+                foreach (string image in material.images)
+                    AddTextureCandidate(candidates, image);
             }
-            return mats;
+
+            int nextKey = -1000;
+            var existingNames = new HashSet<string>(result.Values
+                .Select(t => Path.GetFileName(AssetDatabase.GetAssetPath(t)).ToLowerInvariant()));
+
+            foreach (string candidate in candidates.OrderBy(s => s))
+            {
+                string src = ResolvePresetTexturePath(candidate, presetDir);
+                if (string.IsNullOrEmpty(src)) continue;
+
+                string fileName = SanitizeName(Path.GetFileNameWithoutExtension(src)) + Path.GetExtension(src).ToLowerInvariant();
+                string lowerName = fileName.ToLowerInvariant();
+                if (existingNames.Contains(lowerName)) continue;
+
+                string destAsset = $"{outFolder}/{fileName}";
+                try
+                {
+                    File.Copy(src, Path.GetFullPath(destAsset), true);
+                    AssetDatabase.ImportAsset(destAsset, ImportAssetOptions.ForceUpdate);
+                    ConfigureImportedTexture(destAsset, fileName);
+                    var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(destAsset);
+                    if (tex != null)
+                    {
+                        result[nextKey--] = tex;
+                        existingNames.Add(lowerName);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[PmxBuilder] Preset texture import failed {candidate}: {e.Message}");
+                }
+            }
+        }
+
+        private static void AddTextureCandidate(HashSet<string> candidates, string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext is ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" or ".dds" or ".tif" or ".tiff")
+                candidates.Add(path.Replace('\\', '/'));
+        }
+
+        private static string ResolvePresetTexturePath(string candidate, string presetDir)
+        {
+            string normalized = candidate.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+            if (Path.IsPathRooted(normalized))
+            {
+                string direct = Path.GetFullPath(normalized);
+                if (File.Exists(direct)) return direct;
+            }
+            else
+            {
+                string projectRelative = Path.GetFullPath(Path.Combine(PmxPipelineOptions.ProjectRoot, normalized));
+                if (File.Exists(projectRelative)) return projectRelative;
+
+                string presetRelative = Path.GetFullPath(Path.Combine(presetDir, normalized));
+                if (File.Exists(presetRelative)) return presetRelative;
+            }
+
+            string fileName = Path.GetFileName(normalized);
+            if (string.IsNullOrWhiteSpace(fileName)) return null;
+            try
+            {
+                return Directory.EnumerateFiles(presetDir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void ConfigureImportedTexture(string assetPath, string fileName)
+        {
+            if (AssetImporter.GetAtPath(assetPath) is not TextureImporter importer) return;
+            string lower = fileName.ToLowerInvariant();
+            if (lower.Contains("normal"))
+            {
+                importer.textureType = TextureImporterType.NormalMap;
+                importer.sRGBTexture = false;
+            }
+            else
+            {
+                importer.textureType = TextureImporterType.Default;
+                importer.sRGBTexture = !(lower.Contains("mask") || lower.Contains("lightmap") || lower.Contains("metal"));
+                importer.alphaIsTransparency = true;
+            }
+            importer.SaveAndReimport();
+        }
+
+        private static void AddRenderProfile(GameObject root, PmxRenderPreset renderPreset)
+        {
+            if (renderPreset == null || renderPreset.scene == null || !renderPreset.scene.HasPostProcess) return;
+
+            var profile = root.AddComponent<global::PmxModelRenderProfile>();
+            profile.applyBloom = renderPreset.scene.bloomEnabled || renderPreset.scene.HasPostProcess;
+            profile.bloomIntensity = renderPreset.scene.bloomIntensity > 0.01f
+                ? Mathf.Min(Mathf.Max(renderPreset.scene.bloomIntensity, 0.08f), 0.12f)
+                : 0.10f;
+            profile.bloomColor = PmxRenderPreset.ColorOr(renderPreset.scene.bloomColor, new Color(1f, 0.92f, 0.95f, 1f));
+
+            // Vibrancy grade: the reference is bright and saturated; the previous ACES
+            // tonemap DESATURATED and darkened (the "偏素" look). Use a Neutral tonemap with a
+            // positive saturation/contrast push and a hue-neutral (white) filter so colors
+            // come through punchy without a warm cast.
+            profile.applyColorGrading = true;
+            profile.tonemapper = UnityEngine.Rendering.PostProcessing.Tonemapper.Neutral;
+            profile.contrast = 6f;
+            profile.saturation = 20f;
+            profile.postExposure = 0.05f;
+            profile.colorFilter = Color.white;
+            Debug.Log($"[PmxBuilder] Added runtime render profile: bloom={profile.applyBloom} colorGrading={profile.applyColorGrading} tonemap=Neutral sat={profile.saturation}");
         }
 
         // ----------------------------------------------------------------------
