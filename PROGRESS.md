@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-21（**VRM+RenderStyle 路径已归档**；`.me` 管线确认为唯一生产路径。详见 `Docs/DECISIONS_RECORD.md` ADR-0010）
+- 上次更新：2026-06-21（完成回退后的文档一致性审查；**VRM+RenderStyle 路径已归档**，`.me` 管线确认为唯一生产路径。详见 `Docs/DECISIONS_RECORD.md` ADR-0009）
 
 ## 当前状态
 
@@ -27,6 +27,8 @@
 - 托盘右键菜单已全部汉化为简体中文。
 - 设置面板 X 按钮改为隐藏窗口到托盘（不再退出）；双击托盘图标恢复窗口；只有右键菜单"退出"才真正退出。
 - 设置面板主滚动列表通过 `SettingsMenuScrollBoundsLimiter` 在运行时动态适配实际内容高度：测量最底部元素（Delete AI History）→ 调整 VLG `padding.bottom` → CSF PreferredSize 自然适配 Content 高度 → 强制 Clamped + 滚回顶部。无需手动调整 Content SizeDelta 或禁用 CSF。
+- 当前只保留 `Docs/ARCHITECTURE.md` 与 `Docs/DECISIONS_RECORD.md` 两个项目设计文档；`Docs/RENDER_STYLE_DESIGN.md`、`Docs/PMX_TO_VRM.md` 已随 VRM+RenderStyle 路径归档，不存在于当前工作树。
+- `Assets/PmxImported/`、`Build/PmxModels/` 等 PMX 生成物是本地忽略产物；当前工作树中可能保留历史 `.me`/`.vrm` 验证输出，不作为仓库源状态或生产路线依据。
 
 ## 正在处理
 
@@ -54,7 +56,7 @@
     7. 头发上轮过僵→这轮反而过飘/幅度大/归位慢（欠刚度欠弹性、阻尼偏高）。再调：stiffness↑(发 0.55)、elasticity↑(0.25)、damping↓(0.3)。物理手感主观，建议改用 Play 模式实时调参再回填。
   - **M3.5 已代码完成并 batch 导出（待 App 运行复测）**：`PmxPhysics` 在 Humanoid Avatar/Animator 可用时，按腿部与髋部骨骼自动生成裙摆专用 `DynamicBoneCollider`，碰撞体作为对应骨骼的子物体随动画运动。第三轮根据“下摆被撑起、头发被顶起/穿模”的截图修正过强问题：碰撞体只绑定到 Skirt 类 DynamicBone，Hair/Breast/Other 不再吃身体碰撞；移除横向髋部胶囊和胸/上身胶囊，保留更保守的大腿/小腿/髋/骨盆共 6 个碰撞体；裙摆粒子半径降为 `0.012`。Unity batch 已重新生成特工丽塔 prefab，并导出 `Build/PmxModels/丽塔.me`；仍需在 App 内加载验证裙摆/头发状态。
   - `.gitattributes` 已给 vendored lilToon shader 路径增加 `text eol=crlf` 例外：仓库 blob 仍规范化，Windows 工作树允许 CRLF，避免 Unity/包文件反复产生 shader 换行假脏。
-  - **M4 渲染（UTS2 路线，多轮调试）已封存，根因沉淀进下方踩坑表**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因。
+  - **M4 高保真 HoYo 复刻尝试（UTS2 多轮调试）已封存，根因沉淀进下方踩坑表**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因。结论不是放弃 `.me` 或 UTS2 基线，而是不再把 UTS2 当作高保真 HoYo 多通道语义复刻方案；clean-baseline、`PmxStyleConfig` 和 `.me` 导出仍是当前生产路径的一部分。
 
   **M4 踩坑表（PMX->Unity UTS2 全流程）**：
 
@@ -74,7 +76,7 @@
   | VRM 加载后整模型几乎不可见 | MToon _Color 取自预设 [0,0,0,0] -> 全黑/透明 | 有贴图材质白色 tint；运行时 NormalizeTint 降级守卫 |
 
   - **风格解耦（已完成）**：`PmxStyleConfig`（`Tools/PmxPipeline/styles/<模型>.style.json`）把材质风格调参从 C# 移到逐模型 JSON（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength` + 逐材质覆盖），支持"改 JSON 重跑"与"Editor 实时调 `*.mat`"两种不重编译的迭代循环（见 `Docs/ARCHITECTURE.md`）。
-  - ~~**架构转向 VRM（ADR-0009）**~~ **[ARCHIVED 2026-06-21]**：VRM+RenderStyle 路径 N0-N3 实现完成后实测不可行（HoyoToon 渲染异常 + SpringBone 物理模型不兼容）。代码归档至 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0010。`.me` 管线（UTS2 + DynamicBone）确认为唯一生产路径。
+  - ~~**VRM+RenderStyle 备选路线（已并入 ADR-0008）**~~ **[ARCHIVED 2026-06-21]**：该路径 N0-N3 实现完成后实测不可行（HoyoToon 渲染异常 + SpringBone 物理模型不兼容）。代码归档至 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0009。`.me` 管线（UTS2 + DynamicBone）确认为唯一生产路径。
 
 ## 下一步
 
@@ -176,6 +178,8 @@
 | Unity 版本敏感 | 持续关注 | 必须使用 `6000.2.6f2` |
 | 外部写入审计 | 静态已完成，待运行复核 | 需运行构建产物后确认磁盘和注册表实际行为 |
 | 开机自启动写注册表 | 已知例外 | 用户主动启用/关闭时写入或删除 `HKCU\...\Run` |
+| 多实例启动器可执行文件名 | 待修复 | `BuildScript` 输出 `MateEngine.exe`，但 `LaunchMateEngineInstance.cs` 默认值与主/Update 场景序列化值仍为 `MateEngineX.exe`；若使用多实例按钮会找错 exe |
+| 被跟踪的恢复/备份/样例产物 | 待确认 | `Assets/_Recovery/0.unity`、`UMotionData/AutoBackups/`、`ExportedMods/*.me`、`AssetBundles/`、`Sync/dance_sync.json` 等当前被 Git 跟踪；是否清理需逐项确认用途，避免误删上游样例或有效测试资源 |
 
 ## 错误提醒
 
@@ -226,6 +230,7 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-20 | 文档渲染管线表述修正（URP→Built-in） | 静态核实完成 | 多源证据确认实际为 Built-in；仅改文档，未动代码或工程设置 |
 | 2026-06-20 | PMX M3.5 服装碰撞体 | batch 生成/导出通过，待 App 运行复测 | 第三轮收敛过强碰撞：Skirt 专用下半身碰撞体，Hair/Breast/Other 不绑定身体碰撞；`components=3 chains=37 colliders=6`，裙摆粒子半径 `0.012`；`ExportMe` 已更新 `Build/PmxModels/丽塔.me` |
 | 2026-06-20 | lilToon shader 换行假脏修复 | 静态验证完成 | `.gitattributes` 为 `Assets/MATE ENGINE - Shaders/jp.lilxyzw.liltoon-1.8.5/Shader/*.shader` 增加 `text eol=crlf` 路径级例外，`git check-attr` 验证命中 |
-| 2026-06-20 | PMX M4 渲染（UTS2 路线，多轮） | 已封存，转 VRM 架构（ADR-0009） | 多轮 App 验收逐一定位并修复发紫/脸碎裂/偏暗偏素/后处理失效等根因；现象与解法详见本页上方 M4 踩坑表。风格调参已解耦为 `PmxStyleConfig` 逐模型 JSON |
-| 2026-06-20 | 渲染风格架构设计 + 风格解耦 | 文档完成（ADR-0009 Proposed），代码待 N0 起 | 决策"通用 VRM + App 内置可切换渲染风格"：该路径已于 2026-06-21 归档（复盘见 ADR-0010）；`PmxStyleConfig` 解耦落地；`.me` 导出加用途/踩坑注释保留 |
+| 2026-06-20 | PMX M4 高保真 HoYo 复刻尝试（UTS2 多轮） | 经验沉淀，`.me` 路线保留 | 多轮 App 验收逐一定位并修复发紫/脸碎裂/偏暗偏素/后处理失效等根因；现象与解法详见本页上方 M4 踩坑表。结论是 UTS2 不适合作为高保真 HoYo 语义复刻方案，但 clean-baseline、`PmxStyleConfig` 和 `.me` 打包仍保留 |
+| 2026-06-20 | 渲染风格架构设计 + 风格解耦 | VRM 架构已归档，风格解耦保留 | "通用 VRM + App 内置可切换渲染风格"备选路线已并入 ADR-0008，并于 2026-06-21 归档（复盘见 ADR-0009）；`PmxStyleConfig` 解耦落地并服务当前 `.me`/UTS2 生产路径；旧设计文档已从当前工作树删除 |
 | 2026-06-20 | lilToon shader 换行假脏 index 清理 | 已完成 | `git add --renormalize` 配合 `.gitattributes` 的 `eol=crlf` 例外，消除 58 个 vendored lilToon shader 的 index 行尾 mismatch；`git status` 不再显示该批假脏 |
+| 2026-06-21 | 回退后文档一致性审查 | 已完成 | ADR-0008、`Docs/ARCHITECTURE.md`、`PROGRESS.md` 与 `MEPmxPipeline` 注释同步到 `.me` 唯一生产路径；确认 `Docs/RENDER_STYLE_DESIGN.md`/`Docs/PMX_TO_VRM.md` 不在当前工作树 |

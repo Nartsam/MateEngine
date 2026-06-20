@@ -62,18 +62,17 @@ namespace MateEngine.PmxPipeline
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
-        // ===== Legacy `.me` export (RETAINED, not deleted) =====
+        // ===== Primary `.me` export =====
         // 用途：把构建好的 prefab 连同贴图/材质/着色器打包成单文件 `.me`(ZIP 内含 AssetBundle)，
         // 走 App 现有 `.me` 加载链直接显示；自带渲染，不依赖 App 侧风格系统。
         //
-        // 架构演进：主产物正转向通用 VRM + App 内置可切换渲染风格(见 Docs/RENDER_STYLE_DESIGN.md
-        // 与 ADR-0009)。本 `.me` 路径**保留为可选/兼容**，VRM 导出落地前它仍是唯一可用产物，
-        // 故此处不屏蔽；不要删除。完整流程见 Docs/PMX_TO_VRM.md。
+        // 架构结论：VRM+RenderStyle 路径已归档（见 ADR-0009），当前 PMX 生产路径是
+        // Editor 离线导入 -> UTS2/lilToon + DynamicBone -> `.me`。不要把这里当作旧兼容分支删除。
         //
         // 实现时踩过的坑 + 解决：
         //  1) AssetBundle 不能含 C# 脚本——脚本对玩家程序集解析；ExportInternal 里依赖收集已排除 .cs。
         //  2) 着色器变体剥离：UTS2/lilToon 打进 bundle 后若变体被剥离会渲染成粉红；
-        //     需 Always Included Shaders / shader variant collection 兜底(实施 VRM 前如继续用 .me 需复核)。
+        //     需 Always Included Shaders / shader variant collection 兜底，后续发版前需复核。
         //  3) Addressables content 重建副作用：导出过程可能顺带删除
         //     Assets/AddressableAssetsData/link.xml；提交前需 git 还原该文件。
         //  4) 导出文件名被本机 settings 的 modelName/exportPath 钉死，曾导致输出名为
