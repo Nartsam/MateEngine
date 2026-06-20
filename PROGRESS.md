@@ -54,14 +54,35 @@
     7. 头发上轮过僵→这轮反而过飘/幅度大/归位慢（欠刚度欠弹性、阻尼偏高）。再调：stiffness↑(发 0.55)、elasticity↑(0.25)、damping↓(0.3)。物理手感主观，建议改用 Play 模式实时调参再回填。
   - **M3.5 已代码完成并 batch 导出（待 App 运行复测）**：`PmxPhysics` 在 Humanoid Avatar/Animator 可用时，按腿部与髋部骨骼自动生成裙摆专用 `DynamicBoneCollider`，碰撞体作为对应骨骼的子物体随动画运动。第三轮根据“下摆被撑起、头发被顶起/穿模”的截图修正过强问题：碰撞体只绑定到 Skirt 类 DynamicBone，Hair/Breast/Other 不再吃身体碰撞；移除横向髋部胶囊和胸/上身胶囊，保留更保守的大腿/小腿/髋/骨盆共 6 个碰撞体；裙摆粒子半径降为 `0.012`。Unity batch 已重新生成特工丽塔 prefab，并导出 `Build/PmxModels/丽塔.me`；仍需在 App 内加载验证裙摆/头发状态。
   - `.gitattributes` 已给 vendored lilToon shader 路径增加 `text eol=crlf` 例外：仓库 blob 仍规范化，Windows 工作树允许 CRLF，避免 Unity/包文件反复产生 shader 换行假脏。
-  - **M4 渲染（UTS2 路线，多轮调试）已封存，根因沉淀进避坑指南**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因——这些失败/中间尝试的现象与解法已统一记入 `Docs/PMX_TO_VRM.md` §8 避坑指南，不在此展开。
+  - **M4 渲染（UTS2 路线，多轮调试）已封存，根因沉淀进下方踩坑表**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因。
+
+  **M4 踩坑表（PMX->Unity UTS2 全流程）**：
+
+  | 现象 | 根因 | 解决 |
+  |---|---|---|
+  | 模型左右镜像 | 仅取负 Z + 反转缠绕 = 镜面反射 | MMD->Unity 绕 Y 180 (同时取负 X 和 Z) + 保持原始缠绕 + scale 0.08 |
+  | 腿不弯/部位悬空 | 蒙皮权重落在 付与/D 变形骨（仅靠 inherit 驱动） | BuildSkinRemap：inherit 权重重定向到源控制骨 |
+  | 粘连/拉伸 | PMX 编辑器删面残留的孤立顶点（蒙皮到 操作中心/IK 骨） | FindOrphanVerts 丢弃远离主骨的面 |
+  | 跳舞口型/表情不动 | UniversalBlendshapes 仅 VRM；舞蹈绑定 Body 路径 | SMR 放在 Body 子物体；保留日文形态键名走 bypass |
+  | 全身发紫 | MetalMap + mc1/mc3 被当 matcap 叠加 | matcap 全关；highColor 仅预设显式给有效非黑色才启用 |
+  | **脸部碎裂** | 脸 UV 被错配 Body_LightMap(身体 UV) 当阴影位置图 | 不把 LightMap/Facemap 当 UTS2 阴影位置图（UTS2 无此通道语义） |
+  | 脸部碎感（次因） | 共面贴片同 renderQueue z-fight；双面渲染 | 按材质序号递增 renderQueue；强制单面 CullMode=2 |
+  | 偏暗/偏素/皮肤偏红 | 相机无 PostProcessLayer；皮肤暖色偏移 | 给相机接通后处理；皮肤暖色中性化，由 style.json 微调 |
+  | 渲染参数改一次重跑整链 | 风格参数写死在 C# | PmxStyleConfig 解耦到逐模型 JSON + Editor 实时调 .mat |
+  | HoYo 游戏贴图找不到 | 贴图打包在 .blend 里、无散文件 | 阶段 0 Blender 无头抽图 |
+  | Blender 5.0.1 抽图报错 | 插件路径不匹配 | 用 Blender 3.6 |
+  | VRM 加载后整模型几乎不可见 | MToon _Color 取自预设 [0,0,0,0] -> 全黑/透明 | 有贴图材质白色 tint；运行时 NormalizeTint 降级守卫 |
+
   - **风格解耦（已完成）**：`PmxStyleConfig`（`Tools/PmxPipeline/styles/<模型>.style.json`）把材质风格调参从 C# 移到逐模型 JSON（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength` + 逐材质覆盖），支持"改 JSON 重跑"与"Editor 实时调 `*.mat`"两种不重编译的迭代循环（见 `Docs/ARCHITECTURE.md`）。
   - ~~**架构转向 VRM（ADR-0009）**~~ **[ARCHIVED 2026-06-21]**：VRM+RenderStyle 路径 N0-N3 实现完成后实测不可行（HoyoToon 渲染异常 + SpringBone 物理模型不兼容）。代码归档至 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0010。`.me` 管线（UTS2 + DynamicBone）确认为唯一生产路径。
 
 ## 下一步
 
-- 按 `Docs/RENDER_STYLE_DESIGN.md` 分阶段实施 VRM + App 渲染风格：N0 验证 HoyoToon HI3（Built-in + Unity6 编译/单材质效果）→ N1 RenderStyleManager 接入点原型 → N2 `hoyo_hi3` 风格 → N3 PMX→VRM 导出（SpringBone + 打包 HoYo 贴图）→ N4 设置 UI（一般组/画质下方）→ N5 后处理接通。
-- `.me` 路径保留为兼容（不删除，代码已加用途/踩坑注释），VRM 落地前仍是可用产物。
+- `.me` 管线（UTS2 + DynamicBone）已确认为唯一生产路径。后续迭代方向：
+  - 继续打磨 UTS2 材质参数（逐模型 `style.json` 调参，见 `PmxStyleConfig`）
+  - M3.5 碰撞体 App 内运行复测
+  - 接通相机后处理（Bloom + ColorGrading，已在 `PmxModelRenderProfile` 有代码）
+  - 处理材质 morph 类表情（照れ 腮红等，非顶点 morph，需单独方案）
 
 ## 已完成
 
@@ -205,6 +226,6 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-20 | 文档渲染管线表述修正（URP→Built-in） | 静态核实完成 | 多源证据确认实际为 Built-in；仅改文档，未动代码或工程设置 |
 | 2026-06-20 | PMX M3.5 服装碰撞体 | batch 生成/导出通过，待 App 运行复测 | 第三轮收敛过强碰撞：Skirt 专用下半身碰撞体，Hair/Breast/Other 不绑定身体碰撞；`components=3 chains=37 colliders=6`，裙摆粒子半径 `0.012`；`ExportMe` 已更新 `Build/PmxModels/丽塔.me` |
 | 2026-06-20 | lilToon shader 换行假脏修复 | 静态验证完成 | `.gitattributes` 为 `Assets/MATE ENGINE - Shaders/jp.lilxyzw.liltoon-1.8.5/Shader/*.shader` 增加 `text eol=crlf` 路径级例外，`git check-attr` 验证命中 |
-| 2026-06-20 | PMX M4 渲染（UTS2 路线，多轮） | 已封存，转 VRM 架构（ADR-0009） | 多轮 App 验收逐一定位并修复发紫/脸碎裂/偏暗偏素/后处理失效等根因；现象与解法详见 `Docs/PMX_TO_VRM.md` §8 避坑指南。风格调参已解耦为 `PmxStyleConfig` 逐模型 JSON |
-| 2026-06-20 | 渲染风格架构设计 + 风格解耦 | 文档完成（ADR-0009 Proposed），代码待 N0 起 | 决策"通用 VRM + App 内置可切换渲染风格"：`Docs/RENDER_STYLE_DESIGN.md`、`Docs/PMX_TO_VRM.md` runbook；`PmxStyleConfig` 解耦落地；`.me` 导出加用途/踩坑注释保留 |
+| 2026-06-20 | PMX M4 渲染（UTS2 路线，多轮） | 已封存，转 VRM 架构（ADR-0009） | 多轮 App 验收逐一定位并修复发紫/脸碎裂/偏暗偏素/后处理失效等根因；现象与解法详见本页上方 M4 踩坑表。风格调参已解耦为 `PmxStyleConfig` 逐模型 JSON |
+| 2026-06-20 | 渲染风格架构设计 + 风格解耦 | 文档完成（ADR-0009 Proposed），代码待 N0 起 | 决策"通用 VRM + App 内置可切换渲染风格"：该路径已于 2026-06-21 归档（复盘见 ADR-0010）；`PmxStyleConfig` 解耦落地；`.me` 导出加用途/踩坑注释保留 |
 | 2026-06-20 | lilToon shader 换行假脏 index 清理 | 已完成 | `git add --renormalize` 配合 `.gitattributes` 的 `eol=crlf` 例外，消除 58 个 vendored lilToon shader 的 index 行尾 mismatch；`git status` 不再显示该批假脏 |
