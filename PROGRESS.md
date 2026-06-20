@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-20（PMX 渲染转向"通用 VRM + App 内置风格"架构 ADR-0009；文档去冗余、沉淀避坑指南、删除 HANDOFF）
+- 上次更新：2026-06-21（**VRM+RenderStyle 路径已归档**；`.me` 管线确认为唯一生产路径。详见 `Docs/DECISIONS_RECORD.md` ADR-0010）
 
 ## 当前状态
 
@@ -56,7 +56,7 @@
   - `.gitattributes` 已给 vendored lilToon shader 路径增加 `text eol=crlf` 例外：仓库 blob 仍规范化，Windows 工作树允许 CRLF，避免 Unity/包文件反复产生 shader 换行假脏。
   - **M4 渲染（UTS2 路线，多轮调试）已封存，根因沉淀进避坑指南**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因——这些失败/中间尝试的现象与解法已统一记入 `Docs/PMX_TO_VRM.md` §8 避坑指南，不在此展开。
   - **风格解耦（已完成）**：`PmxStyleConfig`（`Tools/PmxPipeline/styles/<模型>.style.json`）把材质风格调参从 C# 移到逐模型 JSON（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength` + 逐材质覆盖），支持"改 JSON 重跑"与"Editor 实时调 `*.mat`"两种不重编译的迭代循环（见 `Docs/ARCHITECTURE.md`）。
-  - **架构转向 VRM（ADR-0009，待实施）**：终点目标=逼近 HoYo 原效果 + 通用性。决定改为「**通用 VRM 模型 + App 内置可切换渲染风格（含仿 HoYo）**」：渲染风格从烘进 `.me` 转为 App 运行时套用、可切换；物理改 VRM SpringBone；HoYo 贴图打包进 VRM。设计见 `Docs/RENDER_STYLE_DESIGN.md`，端到端操作流程见 `Docs/PMX_TO_VRM.md`。
+  - ~~**架构转向 VRM（ADR-0009）**~~ **[ARCHIVED 2026-06-21]**：VRM+RenderStyle 路径 N0-N3 实现完成后实测不可行（HoyoToon 渲染异常 + SpringBone 物理模型不兼容）。代码归档至 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0010。`.me` 管线（UTS2 + DynamicBone）确认为唯一生产路径。
 
 ## 下一步
 

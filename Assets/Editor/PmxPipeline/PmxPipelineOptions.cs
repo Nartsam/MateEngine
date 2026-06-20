@@ -127,12 +127,20 @@ namespace MateEngine.PmxPipeline
 
         public string ResolveDefaultOutPath(string prefabPath)
         {
-            if (!string.IsNullOrWhiteSpace(OutPath))
+            // Only honor -out (or the stored exportPath) for .me here; a stored .vrm path must not
+            // hijack the .me output. Otherwise fall back to the project default Build root.
+            if (!string.IsNullOrWhiteSpace(OutPath) && HasExtension(OutPath, ".me"))
                 return NormalizeFilePath(OutPath);
 
             string name = Path.GetFileNameWithoutExtension(prefabPath);
             string dir = NormalizeFilePath(DefaultBuildRoot);
             return Path.Combine(dir, name + ".me");
+        }
+
+        private static bool HasExtension(string path, string ext)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            return Path.GetExtension(path).ToLowerInvariant() == ext;
         }
 
         public string ResolveRenderPresetJsonPath()

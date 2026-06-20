@@ -1,8 +1,9 @@
-# PMX → VRM 转换操作手册（Runbook）
+# PMX → `.me` 转换操作手册（Runbook）
 
-> 状态：分阶段 runbook。**当前**：阶段 0–2、旧 `.me` 导出已实现可用；**阶段 3（VRM 导出）等实现**（见 `Docs/RENDER_STYLE_DESIGN.md` 的 N3，ADR-0009）。
-> 关联：`Docs/RENDER_STYLE_DESIGN.md`（架构）、`Docs/DECISIONS_RECORD.md` ADR-0008/0009、`Docs/ARCHITECTURE.md`（PMX 离线管线节）。
-> 最后更新：2026-06-20
+> **⚠️ 注意 (2026-06-21)**：VRM 导出路径（阶段 3–5）已归档，代码在 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0010。本文档现描述 **`.me` 管线**（阶段 0–2）及 §8 踩坑表（适用 UTS2 调试）。
+>
+> 状态：`.me` 管线已实现可用。VRM 部分已归档。
+> 最后更新：2026-06-21
 
 ---
 
