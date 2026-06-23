@@ -312,6 +312,10 @@ public class VRMLoader : MonoBehaviour
 
         StartCoroutine(ReleaseRamAndUnloadAssetsCo());
         SettingsHandlerUtility.ReloadAllSettingsHandlers();
+
+        // Apply the active runtime render style (post grade is global; this also
+        // lays the per-material overlay onto the freshly loaded model).
+        RenderStyleManager.Instance?.ApplyToModel(currentModel);
     }
 
     public Texture2D MakeReadableCopy(Texture texture)

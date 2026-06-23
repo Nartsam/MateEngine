@@ -349,3 +349,143 @@ ADR-0008 记录过一个备选方案：通用 VRM + App 内置可切换 RenderSt
 - .me 管线确认为唯一生产路径。VRM 加载功能保留（项目原生能力），但 PMX→VRM 导出不再使用。
 - `archive/vrm-detour` 分支保留完整 VRM 实现，如需未来重新评估可从中恢复。
 - VRM 相关文档已删除（内容全量在 `archive/vrm-detour` 分支）。
+
+
+## ADR-0010: 运行时可切换渲染风格（RenderStyleManager）——alpha-preserving image effect（全屏后处理与透明窗口不兼容）
+
+状态：Accepted
+
+### 背景
+
+ADR-0009 回退了"通用 VRM + 可切换 RenderStyle"弯路，但弯路中"**运行时可切换渲染风格**"这一架构本身是健全的——失败的是它捆绑的 VRM 转换与 HoyoToon shader。用户需求是在不重生成 `.me` 的前提下，于设置菜单中手动切换渲染风格，并以"逼近 HoYo 原效果"为终点。
+
+调研推翻了两个先前的错误前提：
+
+1. **后处理早已接通**。主场景 Main Camera（fileID 330585543）的第 4 个组件就是 `PostProcessLayer`（guid `948f4100...`，`volumeLayer=0xFFFFFFFF` 监听所有层）。先前用字面量 grep 未命中而误判"后处理是断的"。真正的问题在 `PmxModelRenderProfile`：它 `FindObjectsOfTypeAll<PostProcessVolume>()` **劫持场景里默认关闭的 Bloom/AO Volume** 去改写，导致 grade 不可靠。
+
+2. **HoYo 着色器路线短期无解**（见 ADR-0009）：HoyoToon 在本项目 Built-in RP + Unity 6000.2.6f2 下"惨白/超亮"且不可调。因此着色器作为单独、先小场景实测的 R&D，本期不承诺。
+
+### 决策
+
+剥离复用弯路里健全的"可切换风格"架构（去掉 VRM 转换与 HoyoToon），落地为运行时叠加体系，**不需要重生成 `.me`**。新增 `RenderStyleManager`（场景持久单例，`RuntimeInitializeOnLoadMethod` 自举，无需改场景即存在），内置风格表 `默认/鲜艳/柔和`，`SetStyle(code)` 实时切换、随 `SettingsData.renderStyle` 持久化。
+
+> ⚠️ **首版（全局后处理）已被透明窗口证伪——见下方"修正"。** 现行方案为**纯逐材质**。
+
+设置 UI：`Settings/RenderStyleDropdownHandler.cs`（沿用 `LanguageDropdownHandler` 模式，绑 `SettingsData.renderStyle`，onValueChanged → `RenderStyleManager.SetStyle`）。场景内下拉由编辑器命令 `RenderStyleSceneSetup`（菜单 `MateEngine ▸ Render Style ▸ …`，亦可 `-executeMethod`）**克隆现有 Graphics（画质）下拉**生成——让 Unity 正确处理 fileID/序列化，幂等且可经 git 回退。标题文本设为静态 `渲染风格`（禁用其 `LocalizeStringEvent`，因为所有设置标题走本地化 key 而非字面量）。
+
+`PmxModelRenderProfile` 的后处理职责退役：`PmxMeshBuilder.AddRenderProfile` 不再挂该组件；`Apply` 在 `RenderStyleManager` 存在时（运行时恒成立）no-op。**序列化字段保留**，兼容旧 `.me`。
+
+### 修正：全局后处理与透明窗口根本不兼容（2026-06-21 实测）
+
+首版让 `RenderStyleManager` 拥有专属全局 `PostProcessVolume`（Bloom + ColorGrading，经相机既有 `PostProcessLayer` 生效）。用户实测：切到 `鲜艳/柔和` 后画面**比默认更灰**，且**屏幕出现一大块半透明灰色矩形**（软件窗口本体）。
+
+根因：MateEngine 渲染进**逐像素 alpha 的分层窗口**（`WS_EX_LAYERED`，见 `WinApi.cs`/`AvatarWindowHandler.cs`），相机 `clear=(0,0,0,0)`，由 OS 按 alpha 合成。Unity Built-in 全屏后处理（Bloom/ColorGrading via PostProcessLayer）**不保留 alpha**，把透明区域填成不透明灰 → 桌宠透明/穿透被破坏。佐证：项目自带的 `bloom` 设置默认关闭（`SettingsHandlerToggles` 只 `SetActive` 场景 Bloom Volume），说明上游早已知后处理在此不可用。
+
+→ 这与 ADR-0009 的 HoyoToon 同类：**某个渲染手段在本项目特定环境下根本不可用，必须实测才能发现**。先前"后处理是主视觉杠杆"的前提被推翻。
+
+**因此后处理彻底移除**，风格改为**纯逐材质（UTS2）覆盖**：运行时遍历 `Renderer`，按风格乘 `_Unlit_Intensity`(亮度)、`_1st/_2nd_ShadeColor`(阴影深浅→对比)、`_HighColor`(高光)，缓存原值可逆还原，非 UTS2 材质优雅跳过。只动模型自身像素、绝不碰帧缓冲/背景 → **透明与穿透始终保留**。代价：UTS2 无真正"饱和度"旋钮，材质层只能调亮度/对比，不能做整屏饱和提升。
+
+### 字体方框乱码（tofu）修复
+
+设置/Blendshape 菜单的中文走静态 SDF 回退字体 `Asia Fonts/Chinese (Simple)`（`m_AtlasPopulationMode=0`，仅预烤 `characterSequence` 内字形；`默认` 在表内、`鲜艳柔和渲染风格` 不在 → 方框）。该资产 `m_SourceFontFile` 为空（避免打包 ~10MB TTF），故**运行时切 Dynamic 不可行**。修复：编辑器命令 `RenderStyleSceneSetup.BakeFontGlyphs` 临时把该资产切 Dynamic 并挂回 `NotoSansSC-Medium.ttf`、`TryAddCharacters` 烤入所需字形、再切回 Static 并清空 source ref（不打包 TTF）。烤入 `默认鲜艳柔和渲染风格` + Blendshape 中文译名全部字形（776→819 字，0 缺失）。
+
+### Blendshape 菜单日文→简中
+
+`BlendshapeManager` 原样显示 mesh 的 morph 名（PMX 模型为日文，如 まばたき/笑い）。新增 `BlendshapeNameLocalizer`（运行时静态 JP→CN 字典，覆盖标准 MMD morph 集，未命中原样返回），`BlendshapeManager` 显示名走 `Localize()`。字典的中文字形由上面的字体烤入覆盖（二者共享字符集，`AllLocalizedChars()` 供烤入端取字）。
+
+### 原因
+
+- 纯逐材质只动模型像素，是唯一能保证透明窗口不被破坏的整体调色途径；全屏后处理与分层窗口互斥（实测）。
+- 克隆已知良好的下拉节点 → 避免手写 TMP_Dropdown YAML 子树的高风险；设置滚动区布局约束见 ADR-0007（本条目加在 `bottomElement` 之上、`= GENERAL` 内，属"情况 A"，Limiter 自动重算）。
+- 字体走"临时 Dynamic 烤入再转回 Static"→ 既补齐字形又不给便携包增加 TTF 体积。
+
+### 后果
+
+- 用户可在设置中实时切 `默认/鲜艳/柔和`，可逆、`renderStyle` 重启记忆，**不破坏透明/穿透**。
+- 材质层调亮度/对比，**不能做整屏饱和**；要更强"鲜艳/逼近 HoYo"需 alpha-preserving 自定义 image effect（保留源 alpha 的饱和/对比 blit）或着色器 R&D —— 两者都须实测验证，留作下一步。
+- HoYo 着色器仍 deferred（ADR-0009）。
+- 新增/改动文件：`RenderStyleManager.cs`(纯材质)、`RenderStyleDropdownHandler.cs`、`RenderStyleSceneSetup.cs`(Editor：加下拉/改标题/烤字体)、`BlendshapeNameLocalizer.cs`、`BlendshapeManager.cs`、`SaveLoadHandler.cs`(+`renderStyle`)、`VRMLoader.cs`(钩子)、`PmxModelRenderProfile.cs`/`PmxMeshBuilder.cs`(退役/停挂)、`Asia Fonts/Chinese (Simple).asset`(烤字形)、主场景。
+
+### 待办 / 验证
+
+- 运行 App：加载 `丽塔_m4.me`，切 `默认/鲜艳/柔和` → 确认实时、可逆、重启记忆，且**透明/穿透完好**（无灰色矩形）；确认 `鲜艳/柔和` 不再比默认更灰。
+- 确认下拉标题显示 `渲染风格`、选项 `默认/鲜艳/柔和` 与 Blendshape 中文名**不再是方框**。
+- **视觉复核**下拉在 `= GENERAL` 组的位置/间距。
+
+### 二次反馈修复（2026-06-21）
+
+App 实测反馈 4 项，逐一定位：
+
+1. **逐材质风格"切了没变化"——根因坐实**：`PmxMaterialMapper` 烤进的 UTS2 材质设了 `_Use_BaseAs1st=1` + `_Use_1stAs2nd=1`（让 UTS2 用 base 色推导 1st/2nd 阴影），所以运行时改 `_1st/_2nd_ShadeColor` **完全被忽略**；`_HighColor_Power≈0` 使高光乘子也无效；只剩 `_Unlit_Intensity` 微调 → 肉眼无差。**结论：材质层（在现有 UTS2 烤法下）几乎无法表达"鲜艳"**，UTS2 也没有真正的饱和度旋钮。
+
+2. **设置布局**：`= GENERAL` 是 2 列绝对定位网格（左 x≈-105、右 x≈220），各 section 在 Main Menu 空间按**全单位**定位（GENERAL y=280、`= AUDIO` y=-60），GENERAL 的子项也用全单位（非 0.2327 内容缩放）。所以在底部加新行（y<-340）会撞进 AUDIO。修复：把下拉停进 Discord RPC 行的**空闲右列** (219.85, -260)，不加新行、不挪 section、不撞 AUDIO。
+
+3. **字体方框**：见上节字体烤入。补充：原子集 2048×1024 静态 atlas 接近满（~819 字），一次性烤完整 kana 区间会溢出（`TryAddCharacters` 返回 ok=False + 大量 missing）。修复：① 只烤**精确所需**字形（59 个 morph 原名 + 译名 + 风格串，不烤整段 kana 区间）；② 临时开 `m_IsMultiAtlasTexturesEnabled` 让溢出落到第 2 张 atlas（UGUI 运行时按 atlas 分 submesh 渲染）。最终 776→874 字、0 缺失。
+
+4. **Blendshape 日文→简中**：用 `PmxBlendshapeDump`（`-executeMethod PmxBlendshapeDump.DumpRita`）从 `.me` dump 出 59 个**真实 morph 名**作为字典 key（精确覆盖 `困る2左`/`ウィンク２`/半角 `ｳｨﾝｸ２右` 等变体），显示格式改为 **`中文 / 原文`**（用户要求，便于核对）。
+
+### 鲜艳度改进路线分析（回答用户"分析改进路线"）
+
+终点 B"逼近 HoYo 鲜艳"在本项目两大硬约束下（① 透明分层窗口禁用全屏后处理；② 现有 UTS2 烤法材质层调不动饱和）可选路线：
+
+- **路线 A：alpha-preserving 自定义 image effect（推荐，首选）**。相机 `OnRenderImage` 做饱和/对比/亮度，输出保留源 alpha（`float4(graded.rgb, src.a)`）→ 真正的整屏调色且**不破坏透明**。可作用于现有 `.me`、无需重烤、能让 `鲜艳` 立刻肉眼可见。风险低（关键就是保留 alpha），须截图验证透明。
+- **路线 B：换 lilToon / Poiyomi 重烤 `.me`**（项目已 vendored 两者）。它们有逐材质 HSV/饱和度（lilToon `_MainTexHSVG`），可运行时调饱和且天然不碰帧缓冲。代价：离线管线改造（PMX→lilToon/Poiyomi 而非 UTS2）+ 重导出 + 重调，工作量大。
+- **路线 C：修/重调 UTS2 烤法**（`_Use_BaseAs1st=0` 启用真实阴影色 + ramp + rim）。能加对比/层次（治"偏暗/平"），但仍**无法饱和**（治不了"偏素"），且 UTS2 路线已多轮迭代。
+- **路线 D：HoYo 专用 NPR 着色器**。已证伪（HoyoToon，ADR-0009），长期 R&D。
+- **路线 E：离线预饱和贴图**。粗暴、不可逆，不推荐。
+
+建议：**先上路线 A**（快、整屏真饱和、修复"切风格无变化"、透明安全），其后视效果决定是否再上 B（逐材质艺术可控）。A 的风格分级即可承载 `默认/鲜艳/柔和`。
+
+### 实现：路线 A（已落地，2026-06-21）
+
+用户选"先 A、效果好再考虑 B"。落地：
+
+- 新增 shader `Assets/MATE ENGINE - Shaders/Resources/RenderStyleGrade.shader`（`Hidden/RenderStyleGrade`，放 Resources 保证进包供运行时 `Resources.Load`）：全屏 blit 做 饱和/对比/亮度，**关键是保留源 alpha 且不动全透明像素**（`mask=step(0.0001,src.a)`，`return float4(lerp(src.rgb,graded,mask), src.a)`）——这正是 Built-in PostProcessLayer 做不到、会把透明涂灰的地方。
+- 新增 `RenderStyleImageEffect`（相机 `OnRenderImage`；inactive 时纯 passthrough，故 `默认` 与无效果逐字节一致）。
+- `RenderStyleManager` 改为驱动该 image effect（移除无效的逐材质叠加）：风格 = `saturation/contrast/brightness`。`默认`(passthrough)、`鲜艳`(sat1.45/con1.10/bri1.04)、`柔和`(sat1.15/con0.96/bri1.03)。运行时找 `Camera.main` 挂 effect + 建材质。
+- 相机本就有 `PostProcessLayer`（无激活效果时 passthrough、不破坏透明），本 effect 追加其后、独立运行。
+- **待验证**：透明/穿透在 `鲜艳/柔和` 下完好（image effect 保留 alpha），且 `鲜艳` 明显更艳。若 PostProcessLayer 与本 effect 的 OnRenderImage 顺序有冲突，再调整。
+
+### 三次反馈：路线 A 全屏 grade 会染到菜单（根因 + 暂停）
+
+App 实测：① 切风格模型有明显变化，但**设置菜单颜色也跟着变**；② `鲜艳` 像单纯拉高对比、暗部直接黑掉看不见。
+
+根因（架构级，确认无误）：
+
+- **全场景只有 1 个相机**（`m_ClearFlags=2` SolidColor、bg alpha=0 透明）。它既渲染模型又渲染 **Screen-Space-Camera 的菜单 Canvas**（场景里 `m_RenderMode:1` 的若干 Canvas）。`OnRenderImage` 作用于该相机的最终图像 → 模型 + 相机空间 UI 一起被 grade。Overlay（`m_RenderMode:0`）的 Canvas 在 image effect 之后合成、不受影响，但部分菜单是 Camera 模式（可能为了 blur）→ 被染色。
+- **模型在 layer 10**（专用层，`Model` 物体），但运行时加载的 `.me` 在 `customModelOutput` 下、`VRMLoader` **未重设层** → 不保证在 layer 10。
+- `鲜艳` 用了 contrast>1（绕 0.5 轴）→ 暗部被压成纯黑（已改 contrast=1，靠 saturation+轻 brightness）。
+
+→ 全屏 grade 要做到"只影响模型"，需 **模型专用相机**（layer 10 grade 相机 + 主相机排除该层 + 改 clearFlags + 加载时把 `.me` 重设到 layer 10 + 双相机透明合成）——属相机架构手术，且在透明窗口上风险高、无头不可验证。**因此本期把全屏 grade 暂停**（`RenderStyleManager.GradeEnabled=false`，effect 常 inactive，菜单不再被染），等用户定方向再实现。下拉与持久化保留。
+
+**模型专属（不碰 UI）的鲜艳途径**（待用户选）：① 模型专用 grade 相机（保留路线 A 的整屏真饱和但只作用模型，相机手术）；② 路线 B：lilToon/Poiyomi 重烤（逐材质饱和，天然只动模型）；③ `氛围光`（见下）只能提亮/染色、做不了贴图饱和。
+
+### 设置布局（第三次，确认正确做法）
+
+`= GENERAL` 等 section 是 Main Menu（普通 Transform）下的**绝对定位 RectTransform 兄弟**，不会自动重排。正确做法（ADR-0007 情况A）：把下拉放在 GENERAL **末尾新行**（左列 (-104.9,-360)，比 Discord 低一个行距 100），并把 GENERAL **之后的所有 section 整体下移**（按 sibling index > GENERAL 过滤，下移 120）；滚动区由 `SettingsMenuScrollBoundsLimiter` 依据下移后的 bottomElement **自动加长**，无需改 Limiter。前两次错误：放进 GENERAL 内部空位会撞 FPS/AUDIO（section 不会让位）。
+
+### 关于"氛围光"（回答用户）
+
+`氛围光` = `ColorController` 驱动的 **3 盏场景 Light**（`SettingsHandlerLights` → 每盏 intensity/saturation/hue；`ApplyFadeToTarget` 里 `light.color=HSVToRGB(...)`、`light.intensity=...`）。它**只照亮模型等被光照几何、不影响 UI**（UI 不受光照），所以是**天然"只影响模型"的杠杆**：调高强度可直接治"偏暗"，调 saturation/hue 给模型染色。但它改的是**光照**，**不能提升贴图本身的饱和度**（治不了"偏素"的根本）。可作为即时可用的提亮手段，与路线 A/B 互补。
+
+### 决策：放弃"模型专用 grade 相机"（2026-06-22，仍有效）
+
+用户指出与官方效果的差距**不止饱和度**：头发/配饰的**高光**靠改亮度/对比/饱和度做不出来。坐实——高光是**视线+法线+光照相关的镜面反射**，属 3D 着色，**任何屏幕空间 grade（含模型专用 grade 相机）都不可能产生**。grade 相机只能补"色调"那一半，却要付相机手术代价，**因此彻底放弃**（`RenderStyleManager.GradeEnabled` 维持 false）。
+
+### ❌ 失败路线（务必勿重试）：UTS2 烤法参数微调追 HoYo NPR（2026-06-22，已全部回退）
+
+**试了两轮，越改越差，已 `git checkout` 全部回退到基线烤法、重烤 `丽塔_m4.me` 作兜底。**
+
+- **第一轮 B1（材质恢复高光）**：抽 `HighlightIntent` + `ApplyHighlightUTS2`，对 hair/cloth/metal 用 `*_LightMap`/`MetalMap` 遮罩的近白 UTS2 镜面高光（`_Is_SpecularToHighColor`）。`highColor` 统计从 ~0 升到 14。
+  - **结果：更糟。** 腿（裤袜）变成"**附着油脂的圆柱体**"——UTS2 的 Blinn-Phong 是**柔和扩散**的，根本不是官方那种**硬边高光色块**；叠在本就偏软的卡通上 = 塑料/油腻感。
+- **第二轮 硬卡通 pass**：feather 0.17–0.30 → **0.02**（硬切阴影）、阴影色加深、高光改 MetalMap-only、`outlineScale`→2.0、`brightness`→1.0、皮肤 `_Set_SystemShadowsToBase=1`。
+  - **结果：差得更远。** 整模型**惨白到看不清**、塑料感未消、**头发出现破碎纹理**。盲烤把多个耦合参数一起推过头，直接崩。
+
+**为什么这条路走不通（根因，写死别再撞）：**
+1. **目标是贴图/LightMap 驱动的**。HoYo 官方靠 LightMap 各通道决定 阴影 ramp / AO / 高光强度+锐度，脸用 **SDF**，腿袜/布料那条**锐利高光是各向异性**。**UTS2 不吃这些** → 只能盲目逼近，参数一硬就溢出成惨白/碎面。
+2. **离线烤 = 无实时预览的盲调循环**。每轮 = Blender dump + bundle 重烤（数分钟）且看不到结果，根本无法收敛；两轮单调变差即证。
+3. UTS2 的 `_Is_SpecularToHighColor` 镜面瓣**先天柔和**，做不出参考里的硬边高光块。
+
+**结论**：**UTS2 参数微调路线作废**，不要再在 `PmxMaterialMapper` 里调 feather/shade/highColor/outline 试图追 HoYo。基线烤法（matcap 关、highColor 仅在 preset 给有效色时开、软 feather）保留为**兜底渲染**——它"偏素但不崩"。
+
+**下一步（本期不做，单列）**：上 **lilToon**（能吃 LightMap、有各向异性发丝/布料高光、有 HSV 饱和），但**必先按 ADR-0009 教训**——在本工程 Built-in + 6000.2.6f2 用**小场景实测** lilToon 渲染正常（HoyoToon 当年就是在这步惨白翻车），确认后再改管线，**不再盲改盲烤**。`PmxStyleConfig.materialProfile`（注释已写 "reserved for a future profile"）是接入点。

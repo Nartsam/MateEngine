@@ -70,7 +70,7 @@
   | 全身发紫 | MetalMap + mc1/mc3 被当 matcap 叠加 | matcap 全关；highColor 仅预设显式给有效非黑色才启用 |
   | **脸部碎裂** | 脸 UV 被错配 Body_LightMap(身体 UV) 当阴影位置图 | 不把 LightMap/Facemap 当 UTS2 阴影位置图（UTS2 无此通道语义） |
   | 脸部碎感（次因） | 共面贴片同 renderQueue z-fight；双面渲染 | 按材质序号递增 renderQueue；强制单面 CullMode=2 |
-  | 偏暗/偏素/皮肤偏红 | 相机无 PostProcessLayer；皮肤暖色偏移 | 给相机接通后处理；皮肤暖色中性化，由 style.json 微调 |
+  | 偏暗/偏素/皮肤偏红 | **误判**：以为相机无 PostProcessLayer（字面量 grep 未命中）；实为 `PmxModelRenderProfile` 劫持场景默认关闭的 Bloom/AO Volume 不可靠 + 皮肤暖色偏移 | 后处理改由 `RenderStyleManager` 专属全局 Volume 统管（相机第 4 组件本就有 `PostProcessLayer`，监听所有层）；皮肤暖色中性化，由 style.json 微调。见 ADR-0010 |
   | 渲染参数改一次重跑整链 | 风格参数写死在 C# | PmxStyleConfig 解耦到逐模型 JSON + Editor 实时调 .mat |
   | HoYo 游戏贴图找不到 | 贴图打包在 .blend 里、无散文件 | 阶段 0 Blender 无头抽图 |
   | Blender 5.0.1 抽图报错 | 插件路径不匹配 | 用 Blender 3.6 |
@@ -84,7 +84,8 @@
 - `.me` 管线（UTS2 + DynamicBone）已确认为唯一生产路径。后续迭代方向：
   - 继续打磨 UTS2 材质参数（逐模型 `style.json` 调参，见 `PmxStyleConfig`）
   - M3.5 碰撞体 App 内运行复测
-  - 接通相机后处理（Bloom + ColorGrading，已在 `PmxModelRenderProfile` 有代码）
+  - ~~接通相机后处理（Bloom + ColorGrading）~~ **已完成**：由运行时 `RenderStyleManager` 全局统管（专属全局 Volume 经主场景相机既有 `PostProcessLayer` 生效），设置菜单可切 `默认/鲜艳/柔和`。见 ADR-0010
+  - 运行验证渲染风格下拉：实时切换、可逆、重启记忆；视觉复核下拉在 `= GENERAL` 组的位置
   - 处理材质 morph 类表情（照れ 腮红等，非顶点 morph，需单独方案）
 
 ## 已完成
@@ -213,6 +214,7 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 
 | 日期 | 验证项 | 结果 | 备注 |
 |---|---|---|---|
+| 2026-06-22 | PMX 渲染：UTS2 烤法微调追 HoYo（❌失败已回退） | 两轮越改越差，全部 `git checkout` 回退到基线并重烤兜底 | B1（材质恢复高光）→ 腿变"油脂圆柱"（UTS2 柔和镜面≠官方硬边高光）；硬卡通 pass（feather→0.02/加深阴影/MetalMap高光/描边×2/brightness1.0）→ 惨白看不清+头发碎纹理。**根因：目标是 LightMap/SDF 贴图驱动，UTS2 不吃；且离线盲烤无预览无法收敛。UTS2 参数微调路线作废，勿重试。** 基线烤法保留为兜底（偏素但不崩）。下一步另起：lilToon（先小场景实测再上）。详见 ADR-0010 失败路线。 |
 | 2026-06-22 | 右键径向菜单按钮位置与角色底部裁切余量 | 静态验证完成，待 Unity 运行复核 | 主场景 Buttons[0]/[4] 交换 Settings/Chat 引用；Model 根节点 y -0.8 -> -0.74；未改窗口尺寸、相机参数或按钮事件。 |
 | 2026-06-18 | Steam 依赖移除后构建 | 已通过 | 零编译错误 |
 | 2026-06-18 | 外部写入静态审计 | 已完成 | 剩余命中为编辑器/移动端路径、旧数据只读迁移或用户主动功能 |
@@ -236,3 +238,7 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-20 | 渲染风格架构设计 + 风格解耦 | VRM 架构已归档，风格解耦保留 | "通用 VRM + App 内置可切换渲染风格"备选路线已并入 ADR-0008，并于 2026-06-21 归档（复盘见 ADR-0009）；`PmxStyleConfig` 解耦落地并服务当前 `.me`/UTS2 生产路径；旧设计文档已从当前工作树删除 |
 | 2026-06-20 | lilToon shader 换行假脏 index 清理 | 已完成 | `git add --renormalize` 配合 `.gitattributes` 的 `eol=crlf` 例外，消除 58 个 vendored lilToon shader 的 index 行尾 mismatch；`git status` 不再显示该批假脏 |
 | 2026-06-21 | 回退后文档一致性审查 | 已完成 | ADR-0008、`Docs/ARCHITECTURE.md`、`PROGRESS.md` 与 `MEPmxPipeline` 注释同步到 `.me` 唯一生产路径；确认 `Docs/RENDER_STYLE_DESIGN.md`/`Docs/PMX_TO_VRM.md` 不在当前工作树 |
+| 2026-06-21 | 运行时可切换渲染风格（步骤2）落地 | 代码完成+batch 编译通过，待 App 运行验证 | 新增 `RenderStyleManager`（专属全局 PostProcessVolume 经相机既有 PostProcessLayer 生效，内置 默认/鲜艳/柔和）+ `RenderStyleDropdownHandler` + `RenderStyleSceneSetup`（克隆 Graphics 下拉接线，已 batch 应用入主场景，scene 完整性已核验）；`SettingsData.renderStyle` 持久化；`VRMLoader.FinalizeLoadedModel` 加钩子；`PmxModelRenderProfile` 后处理职责退役（Manager 存在时 no-op，`PmxMeshBuilder` 停挂）。纠正"相机无 PostProcessLayer"误判。HoYo 着色器仍 deferred。见 ADR-0010 |
+| 2026-06-21 | 渲染风格三次反馈：grade 染菜单根因 + 暂停 + 布局修正 | 代码改动完成，待 App 复验 | ① 根因：全场景仅 1 相机，全屏 grade 同时染模型与 Screen-Space-Camera 菜单 → 全屏 grade **暂停**(`GradeEnabled=false`)，待选模型专属途径（模型专用相机/路线B）；② `鲜艳` contrast>1 压黑 → 改 contrast=1 靠 saturation+brightness；③ 布局正解：下拉放 GENERAL 末尾新行 (-104.9,-360) + GENERAL 之后 section 整体下移 120，Limiter 自动加长滚动区（前两次放组内空位撞 FPS/AUDIO）；④ 回答"氛围光"=3 盏场景光(`ColorController`)，只照模型不碰 UI、能提亮但不能提贴图饱和。模型在 layer10、加载 .me 未重层。见 ADR-0010 三次反馈 |
+| 2026-06-21 | 渲染风格二次反馈修复 + 鲜艳路线分析 | 代码+资产改动完成，待 App 复验 | ① 坐实"切风格无变化"根因：UTS2 烤进 `_Use_BaseAs1st=1` 致改阴影色被忽略+无饱和旋钮→材质层调不动鲜艳；② 下拉移到 GENERAL 右列空位 (219.85,-260) 避开 AUDIO 重叠；③ 字体多 atlas 烤入（776→874 字 0 缺失，精确字形+`m_IsMultiAtlasTexturesEnabled`）；④ Blendshape 用 `PmxBlendshapeDump` 取 59 真实 morph 名建字典，显示 `中文 / 原文`。**鲜艳度路线分析**写入 ADR-0010（推荐路线 A：alpha-preserving image effect）。见 ADR-0010 二次反馈 |
+| 2026-06-21 | 渲染风格 App 验证反馈修复（4 项） | 代码+资产改动完成，待 App 复验 | ① **透明被破坏**根因坐实：全屏后处理不保留分层窗口 alpha（切风格出现灰色矩形）→ `RenderStyleManager` **移除全部后处理**，改纯逐材质 UTS2 叠加（亮度/阴影对比/高光，可逆，不碰帧缓冲）；② 下拉标题 `画质`→静态 `渲染风格`（禁用其 LocalizeStringEvent）+ 间距下移到 y=-360；③ **方框乱码**：静态 SDF 回退字体 `Chinese (Simple)` 缺字形且无运行时 source font → 编辑器命令临时切 Dynamic 挂 TTF `TryAddCharacters` 烤入再转回 Static 清 ref（776→819 字，0 缺失，不打包 TTF）；④ Blendshape 日文 morph 名→简中（`BlendshapeNameLocalizer` 字典）。材质层不能做整屏饱和，更强鲜艳需 alpha-preserving image effect 或着色器（待定）。见 ADR-0010 修正 |

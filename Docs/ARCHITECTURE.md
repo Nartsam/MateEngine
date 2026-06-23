@@ -84,14 +84,21 @@
 | `Assets/Editor/PmxPipeline/PmxMeshBuilder.cs` | PMX 网格、骨架、BlendShape、Humanoid、材质、物理与 prefab 构建 |
 | `Assets/Editor/PmxPipeline/PmxPhysics.cs` | PMX 动态刚体/关节转换为 DynamicBone 链，并按 Humanoid 腿部/髋部骨生成 Skirt 专用 DynamicBoneCollider |
 | `Assets/Editor/PmxPipeline/PmxRenderPreset.cs` | Blender 渲染预设 JSON DTO 与材质匹配逻辑 |
-| `Assets/Editor/PmxPipeline/PmxMaterialMapper.cs` | PMX 材质与 Blender preset 参数到 UTS2 材质的映射；贴图材质保留 PMX 贴图原色，只接受有效 preset 颜色，并使用保守的软 toon 阴影、rim 与轮廓参数；matcap/highColor 默认关闭；消费 `PmxStyleConfig` 的逐模型风格覆盖 |
+| `Assets/Editor/PmxPipeline/PmxMaterialMapper.cs` | PMX 材质与 Blender preset 参数到 UTS2 材质的映射；贴图材质保留 PMX 贴图原色，只接受有效 preset 颜色，并使用保守的软 toon 阴影、rim 与轮廓参数；matcap/highColor 默认关闭；消费 `PmxStyleConfig` 的逐模型风格覆盖。**注：2026-06-22 试过在此恢复高光/硬卡通追 HoYo，失败已回退，勿重试，见 ADR-0010 失败路线** |
 | `Assets/Editor/PmxPipeline/PmxStyleConfig.cs` | 逐模型风格配置（JSON）DTO 与加载器；把材质风格调参从 C# 解耦到数据。Shader 无关旋钮：`materialProfile`、`skinWarmth`、`brightness`、`outlineScale`、`rimStrength`，及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖 |
-| `Assets/MATE ENGINE - Scripts/AvatarHandlers/PmxModelRenderProfile.cs` | PMX prefab 运行时后处理配置；加载时临时应用 Bloom/ColorGrading（**注意：当前主场景相机未挂 PostProcessLayer，Built-in 后处理 Volume 不生效**，需后续接通），卸载时还原/清理 |
+| `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleManager.cs` | 运行时可切换渲染风格单例（自举，无需改场景）。内置 `默认/鲜艳/柔和`；`SetStyle` 驱动相机 `RenderStyleImageEffect` 做**保留 alpha 的全屏饱和/对比/亮度**分级（路线 A），随 `SettingsData.renderStyle` 持久化。**不用 Built-in 全屏后处理**——它会破坏分层透明窗口的 alpha（见 ADR-0010）|
+| `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleImageEffect.cs` | 相机 `OnRenderImage` 跑 `Hidden/RenderStyleGrade`；inactive 时纯 passthrough（`默认`=无效果）|
+| `Assets/MATE ENGINE - Shaders/Resources/RenderStyleGrade.shader` | 全屏调色 shader，保留源 alpha 且不动全透明像素 → 透明窗口安全。放 Resources 供运行时 `Resources.Load` |
+| `Assets/Editor/PmxBlendshapeDump.cs` | 编辑器工具：load `.me` bundle dump 所有 morph 名到 `Build/blendshape_names.txt`（供 Blendshape 本地化字典取真实名）|
+| `Assets/MATE ENGINE - Scripts/BlendshapeManager/BlendshapeNameLocalizer.cs` | Blendshape 菜单日文 morph 名→简中静态字典（未命中原样返回）；与字体烤入共享字符集 |
+| `Assets/MATE ENGINE - Scripts/AvatarHandlers/PmxModelRenderProfile.cs` | 旧 PMX prefab 运行时后处理配置（**已退役**）。后处理改由 `RenderStyleManager` 全局统管；本组件在 Manager 存在时 `Apply` no-op，仅为兼容已烤进的旧 `.me` 而保留序列化字段。新 `.me` 不再挂载（`PmxMeshBuilder.AddRenderProfile` 停挂）|
 | `Assets/MATE ENGINE - Scripts/Startup/LoadingScreenController.cs` | 项目内加载页 UI 和主场景异步加载 |
 | `Assets/MATE ENGINE - Scripts/Portable/PortablePaths.cs` | 统一管理运行时数据目录 |
 | `Assets/MATE ENGINE - Scripts/Portable/PortableMigration.cs` | 首次启动迁移旧数据 |
 | `Assets/MATE ENGINE - Scripts/Settings/SaveLoadHandler.cs` | 设置 JSON 读写 |
 | `Assets/MATE ENGINE - Scripts/Settings/LanguageDropdownHandler.cs` | 语言下拉同步与 `selectedLocaleCode` 持久化 |
+| `Assets/MATE ENGINE - Scripts/Settings/RenderStyleDropdownHandler.cs` | 渲染风格下拉：从 `RenderStyleManager` 填充选项，绑 `SettingsData.renderStyle`，切换调 `RenderStyleManager.SetStyle` |
+| `Assets/Editor/RenderStyleSceneSetup.cs` | 编辑器命令（菜单 `MateEngine ▸ Render Style ▸ Add Settings Dropdown` 或 `-executeMethod RenderStyleSceneSetup.AddDropdownBatch`）：克隆设置菜单 Graphics 下拉生成渲染风格下拉并接线，幂等可逆 |
 | `Assets/MATE ENGINE - Scripts/Settings/MenuAudioHandler.cs` | 菜单交互音效；启动完成音效已禁用 |
 | `Assets/MATE ENGINE - Scripts/Settings/MenuActions.cs` | 右键径向菜单开关、阻塞状态和打开瞬间定位；菜单打开后位置保持固定 |
 | `Assets/MATE ENGINE - Scripts/VRMLoader/VRMLoader.cs` | 模型加载、组件注入、模型路径持久化 |

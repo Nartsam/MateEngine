@@ -175,7 +175,7 @@ public class BlendshapeManager : MonoBehaviour
                 if (!blendValues.ContainsKey(r.uniqueKey))
                     blendValues[r.uniqueKey] = startVal;
 
-                string displayName = r.shapeName; 
+                string displayName = BlendshapeNameLocalizer.Localize(r.shapeName);
                 block.SetupSlot(slot, displayName, startVal, v =>
                 {
                     blendValues[r.uniqueKey] = v;

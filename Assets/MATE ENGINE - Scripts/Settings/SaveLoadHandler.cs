@@ -185,6 +185,10 @@ public class SaveLoadHandler : MonoBehaviour
 
         public bool enableLocomotion = false;
 
+        // Runtime render-style selection (post-processing + per-material overrides).
+        // Code matches a built-in style in RenderStyleManager; "default" = no grade.
+        public string renderStyle = "default";
+
 
         //ALARM
         [Serializable]

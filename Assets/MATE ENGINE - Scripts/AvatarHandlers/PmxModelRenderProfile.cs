@@ -48,6 +48,14 @@ public class PmxModelRenderProfile : MonoBehaviour
 
     public void Apply()
     {
+        // Retired: post-processing is now owned by the runtime RenderStyleManager,
+        // which runs a dedicated global PostProcessVolume instead of hijacking the
+        // scene's default-off Bloom/AO volumes (the fragile behaviour below). When
+        // the manager exists (always, at runtime) this component stays inert so the
+        // two don't fight over the same volumes. Serialized fields are kept for
+        // backward-compat with already-baked .me files.
+        if (RenderStyleManager.Instance != null) return;
+
         if (applied || (!applyBloom && !applyColorGrading)) return;
 
         var volumes = Resources.FindObjectsOfTypeAll<PostProcessVolume>();

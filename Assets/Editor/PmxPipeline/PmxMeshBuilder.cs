@@ -439,26 +439,14 @@ namespace MateEngine.PmxPipeline
 
         private static void AddRenderProfile(GameObject root, PmxRenderPreset renderPreset)
         {
+            // Post-processing is no longer baked per-model. The runtime
+            // RenderStyleManager owns a dedicated global PostProcessVolume and the
+            // user picks a style (默认/鲜艳/柔和) in Settings, so we no longer attach
+            // a PmxModelRenderProfile here (it would only fight the manager for the
+            // scene volumes). The component class is kept for backward-compat with
+            // already-baked .me files; it self-disables when the manager exists.
             if (renderPreset == null || renderPreset.scene == null || !renderPreset.scene.HasPostProcess) return;
-
-            var profile = root.AddComponent<global::PmxModelRenderProfile>();
-            profile.applyBloom = renderPreset.scene.bloomEnabled || renderPreset.scene.HasPostProcess;
-            profile.bloomIntensity = renderPreset.scene.bloomIntensity > 0.01f
-                ? Mathf.Min(Mathf.Max(renderPreset.scene.bloomIntensity, 0.08f), 0.12f)
-                : 0.10f;
-            profile.bloomColor = PmxRenderPreset.ColorOr(renderPreset.scene.bloomColor, new Color(1f, 0.92f, 0.95f, 1f));
-
-            // Vibrancy grade: the reference is bright and saturated; the previous ACES
-            // tonemap DESATURATED and darkened (the "偏素" look). Use a Neutral tonemap with a
-            // positive saturation/contrast push and a hue-neutral (white) filter so colors
-            // come through punchy without a warm cast.
-            profile.applyColorGrading = true;
-            profile.tonemapper = UnityEngine.Rendering.PostProcessing.Tonemapper.Neutral;
-            profile.contrast = 6f;
-            profile.saturation = 20f;
-            profile.postExposure = 0.05f;
-            profile.colorFilter = Color.white;
-            Debug.Log($"[PmxBuilder] Added runtime render profile: bloom={profile.applyBloom} colorGrading={profile.applyColorGrading} tonemap=Neutral sat={profile.saturation}");
+            Debug.Log("[PmxBuilder] Skipping baked render profile; post-processing handled at runtime by RenderStyleManager.");
         }
 
         // ----------------------------------------------------------------------
