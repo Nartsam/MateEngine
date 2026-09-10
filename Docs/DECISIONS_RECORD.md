@@ -15,6 +15,8 @@
 | ADR-0007 | 2026-06-20 | 设置菜单滚动区域运行时高度适配 | Accepted |
 | ADR-0008 | 2026-06-20 | PMX 离线导入管线与渲染路线取舍 | Accepted |
 | ADR-0009 | 2026-06-21 | VRM+RenderStyle 弯路复盘：.me 回归为主路径 | Accepted |
+| ADR-0010 | 2026-06-21 | 运行时可切换渲染风格；全屏后处理与透明窗口不兼容 | Accepted |
+| ADR-0011 | 2026-09-10 | 复刻 Blender 渲染预设改走节点图转译，放弃参数拟合 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -288,6 +290,7 @@ Unity 的 VerticalLayoutGroup（VLG）和 ContentSizeFitter（CSF）**完全不�
 - 保留原始日文形态键作为 Unity BlendShape。舞蹈口型依赖 `AvatarDanceShapeConverter` 的 MMD 形态键直驱路径，这也是 PMX→VRM 口型丢失的主要修复点。
 - PMX 刚体/关节近似转换为 DynamicBone 链，并按 Humanoid 腿部/髋部骨生成裙摆专用 DynamicBoneCollider。该物理是可用近似，不追求与 MMD 求解器完全一致。
 - `.blend` 渲染预设只作为材质参数来源：Blender background 导出 JSON，Unity 侧由 `PmxRenderPreset` 与 `PmxMaterialMapper` 映射到 UTS2/lilToon。UTS2 是当前 clean-baseline，不再声明为高保真 HoYo 多通道贴图语义复刻方案。
+  > **2026-09-10 修正：上面这条定位是错的，且是后续一系列失败的源头。** `.blend` 预设不是"一组材质参数"，而是一个 712 个计算节点的着色函数。把它降维成扁平参数字典，等于在第一步就丢掉了要复刻的对象。参数来源这一定位只适用于 UTS2 兜底路径；高保真复刻改走节点图转译，见 ADR-0011。
 - `PmxStyleConfig` 保留为逐模型风格调参层。未来新增 shader profile 必须先在本项目 Built-in + Unity 6000.2.6f2 环境实测通过。
 - 所有外部路径通过 `PmxPipelineOptions` 注入。优先级为 CLI 参数、本机 ignored 配置、项目相对默认值，禁止把开发机绝对路径写入业务代码。
 
@@ -489,3 +492,68 @@ App 实测：① 切风格模型有明显变化，但**设置菜单颜色也跟�
 **结论**：**UTS2 参数微调路线作废**，不要再在 `PmxMaterialMapper` 里调 feather/shade/highColor/outline 试图追 HoYo。基线烤法（matcap 关、highColor 仅在 preset 给有效色时开、软 feather）保留为**兜底渲染**——它"偏素但不崩"。
 
 **下一步（本期不做，单列）**：上 **lilToon**（能吃 LightMap、有各向异性发丝/布料高光、有 HSV 饱和），但**必先按 ADR-0009 教训**——在本工程 Built-in + 6000.2.6f2 用**小场景实测** lilToon 渲染正常（HoyoToon 当年就是在这步惨白翻车），确认后再改管线，**不再盲改盲烤**。`PmxStyleConfig.materialProfile`（注释已写 "reserved for a future profile"）是接入点。
+
+> **2026-09-10 结果：lilToon 路线也已失败并作废。** 该路线按上述"小场景实测 + 实时预览"的纠正执行，迭代到 Phase 2.18 仍无法收敛，产物已归档到分支 `archive/liltoon-npr-tuning`。
+>
+> **更深一层的根因（本 ADR 当年没看到的）**：换 lilToon 与换 UTS2 是同一类错误。目标是一张 712 个计算节点的函数，而 lilToon 只暴露二十几个可调项，**参数拟合的维度不足，理论上就无法收敛**——"实时预览"只能让失败来得快一些，不能让它成功。
+>
+> 另有一条独立死因：当时的 `Tools/PmxPipeline/dump_render_preset.py` **从不导出节点连线**，只按关键词猜测生成扁平字典，算法本身在导出环节就已丢失。见 ADR-0011。
+
+---
+
+## ADR-0011: 复刻 Blender 渲染预设改走节点图转译，放弃参数拟合
+
+状态：Accepted　日期：2026-09-10
+
+### 背景
+
+目标是让「PMX 模型 + 配套 `.blend` 渲染预设」在本软件中呈现与 Blender 中一致的观感。此前三条路线全部失败：PMX→VRM+MToon（ADR-0009）、UTS2 参数微调（ADR-0010）、lilToon 参数调优（迭代到 Phase 2.18，已归档到分支 `archive/liltoon-npr-tuning`）。
+
+2026-09-10 重新分析后确认，这三条路线共享同一个错误前提：**把 `.blend` 预设当成一组材质参数**（ADR-0008 明文如此定位），于是问题被表述为"挑一个通用卡通着色器，调参数逼近它"。
+
+### 根因
+
+两条独立死因，任何一条都足以致命：
+
+1. **导出环节丢失算法。** `Tools/PmxPipeline/dump_render_preset.py` 遍历节点树时从不记录 `node_tree.links`，只按关键词（`"shade"` / `"高光"` / `"outline"`）猜测插槽含义，产出一个 UTS2 形状的扁平字典。节点图的拓扑结构从未被导出过。
+2. **拟合维度不足。** 预设展开后是 712 个计算节点，而 UTS2 / lilToon 只暴露二十几个可调项。参数拟合在理论上就无法收敛。
+
+### 决定性发现
+
+**这套预设是无光照纯函数。** 实测：材质把 Color 直接接进 `Material Output ▸ Surface`，该写法与 Emission 输出逐位相同，而 Diffuse BSDF 在无灯时为纯黑；预设中唯一的灯 `energy = 0.0`，World 为空。对四个预设每一棵树做全量 `bl_idname` 枚举，`ShaderToRGB` / `AmbientOcclusion` / `Bevel` / `LightPath` / `LayerWeight` / `Fresnel` / `VertexColor` 均为 0 次。128 个材质中 124 个为纯函数。
+
+因此整个渲染是一个可以被完整搬走的片元函数，不依赖 Blender 的光照引擎、阴影贴图、全局光照或屏幕空间缓冲。
+
+### 决策
+
+- **写一个「节点图 → HLSL」转译器**，逐节点机械翻译，而不是挑现成着色器调参。收敛具有确定性：对不上就是某个节点译错，可逐节点二分定位。
+- **写转译器而非手写着色器。** 四个预设虽共享 27 个同名节点组，但按结构去重后实为 **41 份实现**（9 个同名组在不同预设里结构不同）。手写意味着每换一个角色重来。
+- **建立自动差分验收闭环**：Blender 无头渲染基准图 vs Unity 渲染，程序化比对像素差异并定位到具体材质。取代"助手调参 / 用户截图判断"的人工循环。
+- **描边离线烘焙**：预设的描边是几何节点实体化外壳，其外扩方向是按 `1e-4` 焊接后重算的顶点法线（实测吻合度 92.9%，原网格法线仅 44.9%）。运行时 pass 无法复现该法线，而离线烘焙一步到位。
+- 保留 `materialProfile = "uts2"` 作为兜底，不得破坏。
+
+### 修正此前的结论
+
+- **ADR-0008**「`.blend` 渲染预设只作为材质参数来源」——定位错误，已在原处加注。该定位仅适用于 UTS2 兜底路径。
+- **ADR-0009**（HoyoToon 因 PMX 缺顶点色失败）——事实正确但**不适用于本路线**。HoyoToon 需要数据挖掘网格的顶点色；本 `.blend` 预设对模型的硬要求只有两条：一套名为 `UVMap` 的 UV，以及与预设一致的材质名。丽塔 PMX 实测全部满足。
+- **ADR-0010**（UTS2 死路）——结论正确，已补记更深一层根因。
+
+### 一条方法论教训
+
+`渲染预设.blend` 是**没有场景的纯材质库**，其内部存的 scene 设置是死数据。真正生效的场景效果由配套插件 `模型预设导入.py` 在导入时写入：bloom 开启（强度 0.08、色 `#FFE4D9`）、`view_transform = Filmic`、`look = High Contrast`。
+
+本次分析第一轮读了库里的死数据，得出"bloom 关闭、look=None"的错误结论，直到读插件源码才发现。**判断"什么设置在生效"必须以实际执行路径为准，而不是文件里存了什么。**
+
+### 后果
+
+- 新增 `Tools/PmxPipeline/export_blender_graph.py`（完整节点图导出器，含连线、插槽默认值、组接口、色带与曲线控制点）。原 `dump_render_preset.py` 仅保留供 UTS2 兜底路径使用，不得用于高保真复刻。
+- 参考资料落盘：`Docs/RenderPreset/graphs/`（四个预设的完整节点图）、`Docs/RenderPreset/vendor/`（配套导入插件副本）、`Docs/RenderRefs/`（Blender 参考截图）。
+- 实施计划见 `Docs/plans/2026-09-10-blender-graph-transpile.md`，其中列有 8 条"不知道就会静默出错"的转译陷阱。
+- **待解决**：预设启用了 bloom，而全屏后处理与透明分层窗口不兼容（ADR-0010）。需自写 alpha 感知的 bloom，或接受该项差异。主线先不做。
+
+### 相关文件
+
+- `Tools/PmxPipeline/export_blender_graph.py`：完整节点图导出器
+- `Docs/plans/2026-09-10-blender-graph-transpile.md`：实施计划与已核实事实清单
+- `Docs/RenderPreset/`：节点图数据、配套插件副本
+- `archive/liltoon-npr-tuning`：lilToon 路线的全部归档产物

@@ -1,3 +1,18 @@
+"""[已弃用 / 仅供 UTS2 兜底路径使用]
+
+本脚本把 .blend 渲染预设压成一个 UTS2 形状的扁平参数字典。它有两处**结构性**
+缺陷，不能用于高保真复刻：
+
+1. 它遍历节点但**从不记录 node_tree.links**——节点图的拓扑结构（也就是着色算法
+   本身）从未被导出过。
+2. 它用关键词（"shade" / "高光" / "outline" ...）猜测插槽含义，猜不中就丢弃。
+
+这两点是 UTS2 与 lilToon 两条复刻路线失败的根因之一，详见 ADR-0011。
+
+高保真复刻请用 Tools/PmxPipeline/export_blender_graph.py（导出完整节点图，含
+连线、插槽默认值、组接口、色带与曲线控制点）。本脚本保留，仅因现有
+materialProfile="uts2" 兜底路径仍依赖它。
+"""
 import argparse
 import json
 import math
