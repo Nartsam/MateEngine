@@ -214,7 +214,7 @@ class ImportMatPresets(bpy.types.Operator, ImportHelper):
 
 class ImportMatPresetsUI(bpy.types.Panel):
     
-    bl_category = "XiaoerTools"   #侧边栏标签
+    bl_category = "RenderTools"   #侧边栏标签
     bl_label = "import material"     #工具卷展栏标签
     bl_idname = "OBJECT_PT_import"   #工具ID
     bl_space_type = 'VIEW_3D'   #空间类型():3D视图
