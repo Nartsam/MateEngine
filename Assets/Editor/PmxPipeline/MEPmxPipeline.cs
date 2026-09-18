@@ -74,7 +74,9 @@ namespace MateEngine.PmxPipeline
         //  2) 着色器变体剥离：UTS2/lilToon 打进 bundle 后若变体被剥离会渲染成粉红；
         //     需 Always Included Shaders / shader variant collection 兜底，后续发版前需复核。
         //  3) Addressables content 重建副作用：导出过程可能顺带删除
-        //     Assets/AddressableAssetsData/link.xml；提交前需 git 还原该文件。
+        //     Assets/AddressableAssetsData/link.xml。2026-09-13 起不再还原它——实测
+        //     Unity 一打开工程就会删，而它本就是 Addressables 的生成物，已随提交
+        //     f62a23fa 从仓库移除。若 IL2CPP 构建出现类型被错误剥离，回退该提交。
         //  4) 导出文件名被本机 settings 的 modelName/exportPath 钉死，曾导致输出名为
         //     丽塔_m4_stylized.me 而非预期名；用 -out 显式指定或清理本机配置可控。
         //

@@ -25,7 +25,9 @@ bpy.context.object（活动物体），无头下由第 ② 步显式设置即可
     --expect    预设节点图 JSON（Docs/RenderPreset/graphs/<角色>.graph.json），
                 给了就逐槽比对节点树，报告里给出「一致 N/26」
     --view      front/back/left/right/three_quarter，或直接给方位角度数（如 35）
-    --bg        transparent（默认）或 sRGB 十六进制（如 808080）
+    --bg        transparent（默认）或 sRGB 十六进制（如 808080）。注意给的是**场景
+                线性**颜色，背景同样要过 Filmic 视图变换，所以出图里的背景不等于这个
+                值（实测 808080 渲出来是 8C8C8C）。做差分请以 alpha 轮廓为准，别依赖背景。
     --res       正方形边长，默认 1024
     --samples   EEVEE 渲染采样数，默认 64
     --margin    相机框选留白系数，默认 1.06

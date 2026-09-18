@@ -196,13 +196,55 @@ offset = N_welded × 0.0012 × W
 
 > 每阶段都有明确的**客观验收判据**，不再依赖肉眼判断。
 
-### Phase 0：基础设施与差分闭环（先做，它是后面所有阶段的验收工具）
+### Phase 0：基础设施与差分闭环（先做，它是后面所有阶段的验收工具）—— **已完成 2026-09-18**
 
-- [ ] 把 `export_blender_graph.py` 接进管线，产出丽塔的完整节点图 JSON（已有产物在 `Docs/RenderPreset/graphs/`）
-- [ ] 写 Blender 无头脚本：加载 PMX → 应用预设（复刻插件行为）→ 固定相机/光照 → 渲染基准图
-- [ ] 写 Unity 侧对应的固定相机渲染
-- [ ] 写像素差异比对脚本，能输出逐材质、逐区域的差异统计
-- **闸门**：能对同一组参数各出一张图并给出差异数值。此时差异必然很大，这不重要——重要的是**闭环能跑**。
+- [x] 把 `export_blender_graph.py` 接进管线，产出丽塔的完整节点图 JSON（产物在 `Docs/RenderPreset/graphs/`）
+- [x] 写 Blender 无头脚本：加载 PMX → 应用预设（复刻插件行为）→ 固定相机/光照 → 渲染基准图
+      —— `Tools/PmxPipeline/blender_apply_preset.py`
+- [x] 写 Unity 侧对应的固定相机渲染 —— `Assets/Editor/PmxPipeline/MERefRenderer.cs`
+- [x] 写像素差异比对脚本，能输出逐材质、逐区域的差异统计 —— `Tools/PmxPipeline/compare_renders.py`
+- [x] 一条命令跑完三环 —— `Tools/PmxPipeline/run_ref_diff.ps1`（全程约 20 秒）
+- **闸门：已通过。**
+
+#### 闭环怎么跑
+
+```
+pwsh Tools/PmxPipeline/run_ref_diff.ps1 -Character 丽塔 -View front
+```
+
+产物落在 `Build/RefDiff/`（已被 .gitignore 忽略）。Python 依赖装在仓库内的
+`Build/.venv`，不碰全局环境。
+
+#### 建立起来的对齐保证
+
+- **坐标映射是推导出来的，不是调出来的**：mmd_tools 用 `Vector(pv.co).xzy * 0.08`，
+  Unity 侧 `PmxMeshBuilder.Conv` 用 `(-px, py, -pz) * 0.08`，消去 PMX 坐标得
+  `U = (-B.x, B.z, -B.y)`。yaw 两边通用。
+- **取景不各算各的**：Unity 侧直接读 Blender 报告里的 `cam` 段。
+- **姿势对齐**：`PmxHumanoid` 会在捕获 bindposes 之后把手臂掰成 T 姿势（Humanoid
+  Avatar 需要），prefab 因此停在 T 姿势。渲染时把骨骼写回 bindpose 即精确还原 PMX
+  原始姿势，prefab 本身不动。
+- **背景不进统计**：Blender 的世界背景同样要过 Filmic（给 808080 渲出来是 8C8C8C）。
+  两边都用透明背景渲，统计只在 alpha 轮廓交集内做。
+
+#### 基线数值（UTS2 材质，Phase 1 开始前）
+
+| 指标 | 数值 |
+|---|---|
+| 轮廓 IoU | 0.9677 |
+| 仅基准有 / 仅对照有 | 4186 px / **0 px** |
+| 交集内 ΔE76 平均 / 中位 / P95 | 11.00 / 9.40 / 21.20 |
+
+「仅对照有 0 px」是对齐精确的硬证据：Unity 轮廓完全落在 Blender 轮廓之内，任何
+相机或姿势偏移都会让两个方向同时出现独有像素。那 4186 px 就是 Blender 有而 Unity
+还没有的描边。
+
+#### 已知局限
+
+- 逐材质分区用的是 Unity 侧的 ID 通道。Blender 压在轮廓**内侧**的描边像素会被算到
+  它盖住的那个材质头上——这是有意为之，描边差异本来就该记在被影响的材质名下。
+- 主渲染有抗锯齿、ID 通道没有，材质交界处约 4% 像素无法归类，统计时直接跳过。
+- 正面视角只能看到 26 个材质里的 20 个，其余被遮挡。要覆盖全部材质需要多角度跑。
 
 ### Phase 1：转译器骨架 + 最简材质
 
