@@ -246,13 +246,67 @@ pwsh Tools/PmxPipeline/run_ref_diff.ps1 -Character 丽塔 -View front
 - 主渲染有抗锯齿、ID 通道没有，材质交界处约 4% 像素无法归类，统计时直接跳过。
 - 正面视角只能看到 26 个材质里的 20 个，其余被遮挡。要覆盖全部材质需要多角度跑。
 
-### Phase 1：转译器骨架 + 最简材质
+### Phase 1：转译器骨架 + 最简材质（进行中）
 
-- [ ] 实现节点求值函数框架与图遍历（拓扑排序、组展开、隐式类型转换）
+- [x] 实现节点求值函数框架与图遍历（拓扑排序、组展开、隐式类型转换）
+      —— `Tools/PmxPipeline/graph_ir.py`，丽塔 30/30 材质展开成功、0 告警
+- [ ] LUT 烘焙器（ColorRamp / RGB Curves，257 项，共 7 张）
+- [ ] 视图变换 LUT（Filmic + High Contrast）—— 曲线数据已实测落盘，见
+      `Docs/RenderPreset/view_transform_filmic_high_contrast.csv`，直接用即可
+- [ ] 代码生成器：IR → HLSL
 - [ ] 先只支持一条最短路径：`基础贴图 → 调色 → 输出`
-- [ ] LUT 烘焙器（ColorRamp / RGB Curves，257 项）
-- [ ] 视图变换 LUT（Filmic + High Contrast）
 - **闸门**：单个平涂材质的 Unity 渲染与 Blender 基准图差异进入个位数灰阶。
+
+#### 架构决定：Python 出着色器，Unity 只负责绑定
+
+转译器写在 Python 侧（`Tools/PmxPipeline/`），产出两样东西：
+
+```
+<角色>.shader          生成的 HLSL
+<角色>.bindings.json   每个材质用哪个 shader、哪张贴图接哪个属性、标量参数、
+                       以及 blend_method / shadow_method / use_backface_culling
+```
+
+Unity 侧只读 `bindings.json` 建材质，不参与图分析。这样分工的理由：
+
+- 图分析与代码生成迭代频繁，Python 改完立刻能跑；放 Unity 里每次都要等编译。
+- 节点图 JSON 本来就是 Python（Blender）产出的，同一侧处理省一次格式往返。
+- Unity 侧的职责收窄成"按清单装配"，正好接进既有的 `materialProfile` 扩展点
+  （Phase 4）。
+
+**`bindings.json` 必须带混合状态**，不能只有贴图和颜色——`眼睛2` 那个 bug 的一半
+原因就是队列与混合模式错了（见上方 Phase 2 核验项）。
+
+#### 节点类型待实现清单
+
+由 `graph_ir.py` 按需展开后实测得出（丽塔全材质，随时可重新生成）：
+
+```
+MATH 274   MIX 188   IMPLICIT_CONV 139   VECT_MATH 86   VALTORGB 82
+TEX_IMAGE 63   ATTRIBUTE 48   MAP_RANGE 40   NEW_GEOMETRY 32   SEPARATE_COLOR 31
+NORMAL_MAP 15  HUE_SAT 15  CURVE_RGB 8  MIX_RGB 6  MAPPING 3  TEX_COORD 3
+UVMAP 2  COMBXYZ 2  VECT_TRANSFORM 1  TEX_NOISE 1  TEX_VORONOI 1
+BSDF_TRANSPARENT 2  MIX_SHADER 2  BSDF_DIFFUSE 1  BSDF_GLOSSY 1
+```
+
+约 25 种，前 6 种覆盖大部分。BSDF_* 与 MIX_SHADER **全部来自 `表情` 一个材质**——
+它走 mmd_tools 的 `MMDShaderDev`（真 BSDF），是预设作者唯一没做风格化的材质。
+其余 29 个材质的输出要么是无光照自发光、要么是常量平涂，「预设是无光照纯函数」
+至此从判定性实验升级为逐材质核实。
+
+#### 待补的稳健性缺口
+
+- **导出器没有导 `is_active_output`。** Blender 允许一棵树里有多个 Material Output /
+  Group Output，但只有标记为活动的那个生效。目前 `graph_ir.py` 在遇到多个时取第一个
+  并告警。丽塔四个预设里暂未出现该情形，但换角色可能踩到，属于"静默取错分支"类问题。
+  修法：在 `export_blender_graph.py` 的 `NODE_PROPS` 里加上 `is_active_output`。
+
+#### 基准 PMX 的选定
+
+`examples/丽塔/删披风删骨骼.pmx` 与 `models/特工丽塔/删披风删骨骼.pmx` 内容完全相同
+（sha256 前缀 `ddfa6d57`），但 **`删披风删骨骼_修复.pmx` 是另一份文件**（`c80d8cd1`）。
+差分两侧必须用同一份，现统一用 **`删披风删骨骼_修复.pmx`**（较新，且 Blender 侧一直
+用的是它）。`run_ref_diff.ps1` 的默认值已按此设定。
 
 ### Phase 2：逐特性推进
 
