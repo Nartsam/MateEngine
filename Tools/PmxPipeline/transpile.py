@@ -602,7 +602,9 @@ Shader "{shader_name}"
     SubShader
     {{
         Tags {{ "RenderType" = "{render_type}" "Queue" = "{queue_tag}" }}
-        Cull {cull}
+        // Cull 走属性而不是写死：材质 ID 通道要照着真实材质的剔除方式渲，否则反向
+        // 外壳会双面绘制、把整个身体盖住，分区统计全错。
+        Cull [_Cull]
         ZWrite {zwrite}
         Blend {blend}
 
@@ -811,14 +813,15 @@ def main():
         mm = graph.materials[name]
         blend = mm.get("blend_method") or "OPAQUE"
         rt, qtag, zwrite, blend_cmd, queue = BLEND_STATE.get(blend, BLEND_STATE["OPAQUE"])
-        cull = "Back" if mm.get("use_backface_culling") else "Off"
         shader_name = "%s/%s/%s" % (SHADER_PREFIX, character, ascii_id)
 
         props = "\n".join(
             '        %s ("%s", 2D) = "white" {}' % (t["prop"], t["image"])
             for t in em.textures)
         props = (props + "\n" if props else "") + \
-            '        _MELut ("LUT (自动填充)", 2D) = "white" {}'
+            '        _MELut ("LUT (自动填充)", 2D) = "white" {}\n' + \
+            ('        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = %d'
+             % (2 if mm.get("use_backface_culling") else 0))
         samplers = "\n".join(
             "            sampler2D %s;\n            float4 %s_TexelSize;"
             % (t["prop"], t["prop"]) for t in em.textures)
@@ -827,7 +830,7 @@ def main():
             graph=os.path.basename(args.graph), mat_name=name,
             node_count=len(ex.nodes), tex_count=len(em.textures),
             shader_name=shader_name, properties=props, render_type=rt,
-            queue_tag=qtag, cull=cull, zwrite=zwrite, blend=blend_cmd,
+            queue_tag=qtag, zwrite=zwrite, blend=blend_cmd,
             lut_rows="{LUT_ROWS}", vt_lo=fnum(ctx.view_lo), vt_hi=fnum(ctx.view_hi),
             library=lib, samplers=samplers,
             body="\n".join("            " + l.strip() for l in em.lines),

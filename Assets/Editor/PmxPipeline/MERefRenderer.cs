@@ -132,7 +132,13 @@ namespace MateEngine.PmxPipeline
                 if (pose == "bind") RestoreBindPose(root);
                 else Say($"保留 prefab 自带姿势（-pose {pose}）");
 
-                // 2.5) 换上转译材质（给了 -bindings 才做；不给就保留 UTS2 兜底）
+                // 2.5) 先并描边外壳，再换材质：外壳的子网格挂的是按 Blender 材质名
+                //      命名的占位材质，正好被下一步按名字替换成转译材质。
+                string outlineMeta = GetArg("-outline");
+                if (!string.IsNullOrEmpty(outlineMeta))
+                    foreach (var line in MEOutlineShell.Apply(root, outlineMeta)) Say(line);
+
+                // 换上转译材质（给了 -bindings 才做；不给就保留 UTS2 兜底）
                 var transpiled = ApplyTranspiled(root, blenderReport);
 
                 var bounds = ComputeWorldBounds(root);
@@ -620,6 +626,12 @@ namespace MateEngine.PmxPipeline
             // （实测调色板 204 会变成 154，正好是 GammaToLinear(0.8)×255）。
             // 注意相机 backgroundColor 不同——它不走着色器属性系统，那边确实要手动转。
             mat.SetColor("_Color", new Color(rgb.r / 255f, rgb.g / 255f, rgb.b / 255f, 1f));
+
+            // 剔除方式必须跟着真实材质走：描边是反向外壳，双面绘制会把整个身体盖住，
+            // ID 图上大半个人都被标成 edge_clothes。转译着色器把 _Cull 暴露成属性正是
+            // 为了这里能读到。
+            if (src != null && src.HasProperty("_Cull"))
+                mat.SetFloat("_Cull", src.GetFloat("_Cull"));
 
             // 头发、裙摆这类材质靠 alpha 镂空。ID 通道必须照样裁剪，否则镂空处会被
             // 涂实，把它后面的脸和腿误标成前者。

@@ -46,6 +46,12 @@ param(
     # 平时复用 Docs/RenderPreset/graphs/ 与 Build/RenderPreset/images/。
     [switch] $ExportGraph,
 
+    # 重新烘焙描边外壳。产物不存在时会自动烘一次，这个开关用于强制重烘。
+    [switch] $BakeOutline,
+
+    # 不并描边外壳（用于把「描边的差异」和「着色的差异」分开量）
+    [switch] $NoOutline,
+
     [switch] $SkipBlender,
     [switch] $SkipUnity
 )
@@ -131,6 +137,7 @@ $imagesDir   = "Build/RenderPreset/images/$Character"
 $transpDir   = "Assets/Generated/PmxTranspiled/$Character"
 $bindings    = Join-Path $repo "$transpDir/$Character.bindings.json"
 $viewLut     = Join-Path $repo "Docs/RenderPreset/view_transform_filmic_high_contrast.csv"
+$outlineMeta = Join-Path $repo "Build/RenderPreset/outline/$Character.outline.json"
 
 if ($ExportGraph) {
     $exportLog = Join-Path $outFull "export_graph.log"
@@ -139,6 +146,16 @@ if ($ExportGraph) {
         "-P", "Tools/PmxPipeline/export_blender_graph.py", "--",
         "--out", $Graph, "--images", $imagesDir) $exportLog $exportLog
     Show-Lines $exportLog '^\[export_graph\]'
+}
+
+if ($BakeOutline -or -not (Test-Path $outlineMeta)) {
+    $bakeLog = Join-Path $outFull "bake_outline.log"
+    Invoke-Step "烘焙描边外壳" $BlenderExe @(
+        "-b", "--factory-startup",
+        "-P", "Tools/PmxPipeline/bake_outline_shell.py", "--",
+        "--pmx", $Pmx, "--preset", $Preset,
+        "--out", (Join-Path $repo "Build/RenderPreset/outline/$Character")) $bakeLog $bakeLog
+    Show-Lines $bakeLog '^\[outline\]'
 }
 
 if ($Profile -eq "transpiled") {
@@ -169,6 +186,7 @@ if (-not $SkipUnity) {
            "-res", "$Res", "-bg", $bg, "-view", $View, "-idOut", $idPng)
     if ($Prefab) { $a += @("-prefab", $Prefab) } else { $a += @("-pmx", $Pmx) }
     if ($Profile -eq "transpiled") { $a += @("-bindings", $bindings) }
+    if ($Profile -eq "transpiled" -and -not $NoOutline) { $a += @("-outline", $outlineMeta) }
 
     Invoke-Step "Unity 对照图" $UnityExe $a $null $unityLog
     Show-Lines $unityLog '^\[MERefRenderer\]'

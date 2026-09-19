@@ -14,13 +14,16 @@ Shader "Hidden/MateEngine/IdPass"
         _MainTex ("Alpha Source", 2D) = "white" {}
         _Cutoff ("Alpha Cutoff", Range(0,1)) = 0.5
         [Toggle] _UseAlphaClip ("Use Alpha Clip", Float) = 0
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 0
     }
 
     SubShader
     {
         Tags { "RenderType" = "Opaque" "Queue" = "Geometry" }
-        // 双面：PMX 的头发片、裙摆多为单层面片，剔除背面会在 ID 图上留洞
-        Cull Off
+        // 默认双面：PMX 的头发片、裙摆多为单层面片，剔除背面会在 ID 图上留洞。
+        // 但**必须跟着真实材质走**：描边外壳是反向外壳，如果这里双面绘制，它会把
+        // 整个身体盖住，ID 图上大半个人都会被标成 edge_clothes。
+        Cull [_Cull]
         ZWrite On
 
         Pass
