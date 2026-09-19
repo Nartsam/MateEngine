@@ -132,6 +132,9 @@ namespace MateEngine.PmxPipeline
                 if (pose == "bind") RestoreBindPose(root);
                 else Say($"保留 prefab 自带姿势（-pose {pose}）");
 
+                // 2.5) 换上转译材质（给了 -bindings 才做；不给就保留 UTS2 兜底）
+                var transpiled = ApplyTranspiled(root, blenderReport);
+
                 var bounds = ComputeWorldBounds(root);
                 Say($"Unity 世界包围盒 中心=({bounds.center.x:F4}, {bounds.center.y:F4}, " +
                     $"{bounds.center.z:F4}) 尺寸=({bounds.size.x:F4}, {bounds.size.y:F4}, {bounds.size.z:F4})");
@@ -161,6 +164,8 @@ namespace MateEngine.PmxPipeline
                 if (!string.IsNullOrEmpty(idOut))
                     report["material_ids"] = RenderIdPass(root, cam, res, idOut);
 
+                if (transpiled != null) report["transpiled"] = transpiled.Log;
+
                 string reportPath = GetArg("-report");
                 if (!string.IsNullOrEmpty(reportPath))
                 {
@@ -180,6 +185,32 @@ namespace MateEngine.PmxPipeline
                 Console.Out.Flush();
                 return false;
             }
+        }
+
+        // 换上转译材质，并把三个方向 uniform 写进去。
+        //
+        // 三个方向都取自 Blender 报告里几何节点实测的属性值，再过一遍坐标映射。
+        // 映射行列式为 -1（正交反射），点积在其下不变，所以「SUN·N」这类量两边自动
+        // 一致，不需要额外补偿。
+        private static METranspiledMaterials ApplyTranspiled(GameObject root, JObject blenderReport)
+        {
+            string bindings = GetArg("-bindings");
+            if (string.IsNullOrEmpty(bindings)) return null;
+
+            var t = METranspiledMaterials.Load(bindings);
+            Vector3 B(string key, Vector3 fallback) =>
+                TryGetVec(blenderReport, "drivers", key, out var v) ? v : fallback;
+
+            var sun = METranspiledMaterials.ParseVec(GetArg("-sunBlender"),
+                                                     B("SUN", new Vector3(0f, -0.86603f, 0.5f)));
+            var front = B("FRONT", new Vector3(0f, 1f, 0f));
+            var right = B("RIGHT", new Vector3(1f, 0f, 0f));
+            t.SetDirections(BlenderToUnity(sun).normalized,
+                            BlenderToUnity(front).normalized,
+                            BlenderToUnity(right).normalized);
+            t.Apply(root);
+            foreach (var line in t.Log) Say(line);
+            return t;
         }
 
         private static string BuildFromPmx(string pmxPath)

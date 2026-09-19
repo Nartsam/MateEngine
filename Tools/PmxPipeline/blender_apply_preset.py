@@ -83,12 +83,19 @@ def parse_args():
         "pmx": None, "preset": None, "out": None, "report": None,
         "save_blend": None, "res": 1024, "view": "front", "bg": "transparent",
         "margin": 1.06, "samples": 64, "expect": None, "sun_euler": None,
+        # 诊断用：单独关掉 bloom 再渲一张。bloom 是屏幕空间效果，Unity 侧在透明
+        # 分层窗口的约束下还没有对应实现，关掉它才能把「转译本身的误差」从
+        # 「缺 bloom 的误差」里分离出来。
+        "no_bloom": False,
     }
     i = 0
     while i < len(argv):
         a = argv[i]
         key = a[2:].replace("-", "_") if a.startswith("--") else None
-        if key in args and i + 1 < len(argv):
+        if key == "no_bloom":
+            args["no_bloom"] = True
+            i += 1
+        elif key in args and i + 1 < len(argv):
             v = argv[i + 1]
             args[key] = int(v) if key in ("res", "samples") else (
                 float(v) if key == "margin" else v)
@@ -437,6 +444,12 @@ def main():
     plugin.load_presets(preset, FACE_LOCATOR_NAME, HEAD_BONE_NAME,
                         MATCH_MODE_STRIP_SUFFIX, SET_SCENE_EFFECT)
     say("load_presets() 返回正常")
+
+    if args["no_bloom"]:
+        # 放在 load_presets 之后：真正生效的 bloom 设置是插件写进来的，
+        # 提前关会被它覆盖回去
+        bpy.context.scene.eevee.use_bloom = False
+        say("!! 已按 --no-bloom 关闭 bloom（仅用于分离误差来源，不是默认行为）")
 
     if args["sun_euler"]:
         sun = bpy.data.objects.get("灯光")

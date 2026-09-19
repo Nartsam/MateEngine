@@ -37,6 +37,15 @@ param(
     [string] $BlenderExe = "D:\Program Files\Blender\3.6\blender.exe",
     [string] $UnityExe = "D:\Program Files\Unity\Hub\Editor\6000.2.6f2\Editor\Unity.exe",
 
+    # transpiled = 用节点图转译出的着色器（Phase 1 起的主线）
+    # uts8       = 保留 UTS2 兜底，用来对照基线
+    [ValidateSet("transpiled", "uts2")]
+    [string] $Profile = "transpiled",
+
+    # 重新从 .blend 导出节点图与打包贴图。只有换预设或改导出器时才需要，
+    # 平时复用 Docs/RenderPreset/graphs/ 与 Build/RenderPreset/images/。
+    [switch] $ExportGraph,
+
     [switch] $SkipBlender,
     [switch] $SkipUnity
 )
@@ -108,6 +117,37 @@ function Show-Lines([string] $Path, [string] $Pattern) {
     }
 }
 
+$py = Join-Path $repo "Build/.venv/Scripts/python.exe"
+if (-not (Test-Path $py)) {
+    throw @"
+缺少虚拟环境。依赖只装在仓库内，不碰全局环境。先执行：
+  python -m venv Build/.venv
+  Build/.venv/Scripts/python.exe -m pip install numpy pillow
+"@
+}
+$env:PYTHONIOENCODING = "utf-8"
+
+$imagesDir   = "Build/RenderPreset/images/$Character"
+$transpDir   = "Assets/Generated/PmxTranspiled/$Character"
+$bindings    = Join-Path $repo "$transpDir/$Character.bindings.json"
+$viewLut     = Join-Path $repo "Docs/RenderPreset/view_transform_filmic_high_contrast.csv"
+
+if ($ExportGraph) {
+    $exportLog = Join-Path $outFull "export_graph.log"
+    Invoke-Step "导出节点图与贴图" $BlenderExe @(
+        "-b", $Preset, "--factory-startup",
+        "-P", "Tools/PmxPipeline/export_blender_graph.py", "--",
+        "--out", $Graph, "--images", $imagesDir) $exportLog $exportLog
+    Show-Lines $exportLog '^\[export_graph\]'
+}
+
+if ($Profile -eq "transpiled") {
+    Write-Host "==== 转译节点图 -> HLSL" -ForegroundColor Cyan
+    & $py (Join-Path $repo "Tools/PmxPipeline/transpile.py") `
+        --graph $Graph --images $imagesDir --view-lut $viewLut --out (Join-Path $repo $transpDir)
+    if ($LASTEXITCODE -ne 0) { throw "转译失败" }
+}
+
 if (-not $SkipBlender) {
     $blenderLog = Join-Path $outFull "blender.log"
     $a = @("-b", "--factory-startup", "-P", "Tools/PmxPipeline/blender_apply_preset.py", "--",
@@ -128,22 +168,13 @@ if (-not $SkipUnity) {
            "-blenderReport", $refJson, "-out", $tstPng, "-report", $tstJson,
            "-res", "$Res", "-bg", $bg, "-view", $View, "-idOut", $idPng)
     if ($Prefab) { $a += @("-prefab", $Prefab) } else { $a += @("-pmx", $Pmx) }
+    if ($Profile -eq "transpiled") { $a += @("-bindings", $bindings) }
 
     Invoke-Step "Unity 对照图" $UnityExe $a $null $unityLog
     Show-Lines $unityLog '^\[MERefRenderer\]'
 }
 
-$py = Join-Path $repo "Build/.venv/Scripts/python.exe"
-if (-not (Test-Path $py)) {
-    throw @"
-缺少虚拟环境。依赖只装在仓库内，不碰全局环境。先执行：
-  python -m venv Build/.venv
-  Build/.venv/Scripts/python.exe -m pip install numpy pillow
-"@
-}
-
 Write-Host "==== 差异统计" -ForegroundColor Cyan
-$env:PYTHONIOENCODING = "utf-8"
 $cmpArgs = @("--ref", $refPng, "--test", $tstPng, "--out-dir", $outFull,
              "--report", $diffJson)
 if ((Test-Path $idPng) -and (Test-Path $tstJson)) {

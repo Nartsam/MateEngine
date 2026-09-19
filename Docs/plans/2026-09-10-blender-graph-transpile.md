@@ -212,8 +212,25 @@ offset = N_welded × 0.0012 × W
 pwsh Tools/PmxPipeline/run_ref_diff.ps1 -Character 丽塔 -View front
 ```
 
+默认走转译材质（`-Profile transpiled`），全程约 50 秒：转译 → Blender 基准 →
+Unity 对照 → 差异统计。常用开关：
+
+| 开关 | 作用 |
+|---|---|
+| `-Profile uts2` | 换回 UTS2 兜底材质，用来对照基线 |
+| `-ExportGraph` | 重新从 `.blend` 导出节点图与解包贴图（换预设或改导出器时才需要） |
+| `-SkipBlender` / `-SkipUnity` | 复用上一次的某一侧 |
+
 产物落在 `Build/RefDiff/`（已被 .gitignore 忽略）。Python 依赖装在仓库内的
 `Build/.venv`，不碰全局环境。
+
+把「转译误差」和「缺 bloom 的误差」分开量：
+
+```
+blender.exe -b --factory-startup -P Tools/PmxPipeline/blender_apply_preset.py -- \
+    --pmx <...> --preset <...> --out <...> --res 1024 --view front \
+    --bg transparent --no-bloom
+```
 
 #### 建立起来的对齐保证
 
@@ -246,26 +263,89 @@ pwsh Tools/PmxPipeline/run_ref_diff.ps1 -Character 丽塔 -View front
 - 主渲染有抗锯齿、ID 通道没有，材质交界处约 4% 像素无法归类，统计时直接跳过。
 - 正面视角只能看到 26 个材质里的 20 个，其余被遮挡。要覆盖全部材质需要多角度跑。
 
-### Phase 1：转译器骨架 + 最简材质（进行中）
+### Phase 1：转译器骨架 + 最简材质 —— **已完成 2026-09-19**
 
 - [x] 实现节点求值函数框架与图遍历（拓扑排序、组展开、隐式类型转换）
-      —— `Tools/PmxPipeline/graph_ir.py`，丽塔 30/30 材质展开成功、0 告警
-- [ ] LUT 烘焙器（ColorRamp / RGB Curves，257 项，共 7 张）
-- [ ] 视图变换 LUT（Filmic + High Contrast）—— 曲线数据已实测落盘，见
-      `Docs/RenderPreset/view_transform_filmic_high_contrast.csv`，直接用即可
-- [ ] 代码生成器：IR → HLSL
-- [ ] 先只支持一条最短路径：`基础贴图 → 调色 → 输出`
-- **闸门**：单个平涂材质的 Unity 渲染与 Blender 基准图差异进入个位数灰阶。
+      —— `Tools/PmxPipeline/graph_ir.py`
+- [x] LUT 烘焙器 —— 不在 Python 里重算 B 样条与贝塞尔，改由 `export_blender_graph.py`
+      在 Blender 里用 `ColorRamp.evaluate` / `CurveMapping.evaluate` 烤表，写进
+      节点图 JSON 的 `luts` 段（formatVersion 3）。丽塔实得 7 张表
+- [x] 视图变换 LUT（Filmic + High Contrast）—— 用实测的
+      `Docs/RenderPreset/view_transform_filmic_high_contrast.csv`，存成
+      「display sRGB 的线性值」，直接由 sRGB 渲染目标编码回去
+- [x] 代码生成器：IR → HLSL —— `Tools/PmxPipeline/transpile.py`
+      + `Tools/PmxPipeline/hlsl/me_nodes.hlsl`（节点求值库，内联进每个着色器）
+- [x] Unity 侧装配 —— `Assets/Editor/PmxPipeline/METranspiledMaterials.cs`
+- **闸门：已通过，且远超预期**——不是「单个平涂材质」，是 **30/30 个材质全部转译**。
+
+#### 验收数值（丽塔，front，1024²）
+
+| 指标 | Phase 0 基线（UTS2） | 转译后 | 转译后（两边都关 bloom） |
+|---|---|---|---|
+| 交集内 ΔE76 平均 | 11.00 | 4.17 | **2.17** |
+| 交集内 ΔE76 中位 | 9.40 | 1.41 | **0.68** |
+| 交集内 ΔE76 P95 | 21.20 | 18.72 | **10.97** |
+| RGB 平均绝对误差 | — | 6.9/255 | **3.6/255** |
+| 轮廓 IoU | 0.9677 | 0.9676 | 0.9676 |
+
+轮廓 IoU 没动是对的：差的 4201 px 全是 Blender 有而 Unity 还没有的**描边**（Phase 3）。
+
+逐材质（关 bloom 后）中位 ΔE：`脸 0.00`、`皮肤 0.46`、`手套 0.48`、`袜子 0.59`、
+`眼白 0.61`、`前裙 0.68`——大面积材质已进入「肉眼无差」区间。
+
+#### 最重要的发现：bloom 现在是第一误差源
+
+关掉 bloom 后平均 ΔE 从 4.17 掉到 2.17、中位从 1.41 掉到 0.68，**一半的剩余误差来自
+没做 bloom**。逐材质取样也全部指向它：**所有 24 个材质在 Unity 侧都偏暗**，且偏暗
+幅度与「该材质周围有多亮」成正比——`袜子`（大片暗色）只差 −0.9，`衣服`（暗紫贴着亮
+皮肤）差 −19.7，`眉毛`（暗细条嵌在亮脸上）差 −75.7。这是 bloom 的典型特征，不是着色
+器算错。
+
+**因此把「决定 bloom 方案」从 Phase 4 提前**，见下方新的 Phase 2.5。诊断入口已加好：
+`blender_apply_preset.py --no-bloom` 可以渲一张不带 bloom 的基准图，用来把「转译本身
+的误差」和「缺 bloom 的误差」分开量。
+
+#### 顺带查出并修掉的两个静默错误
+
+1. **Reroute 断链（严重）。** `graph_ir.py` 按名字找 Reroute 的输入插槽 `Input`，
+   但 Blender 的 Reroute 插槽标识符**不固定**：丽塔 18 个 Reroute 里 13 个是
+   `Input`、3 个是 `input.001`、2 个是 `input`。5 个断链的后果是上游被当成「没接
+   线」→ 取插槽默认值（黑）→ **16 个材质的整条 `调色` 链被算成黑色**，而展开过程
+   一条告警都不报。修法是「Reroute 只有一个输入，取唯一那条连线」。
+   修完 `HUE_SAT` 从 15 处涨到 31 处、`CURVE_RGB` 从 8 处涨到 24 处。
+2. **非活动插槽上的残留连线。** 已按计划在 `graph_ir.py` 里按活动 `data_type` 取插槽，
+   并对非活动插槽上的连线**报警而非忽略**。丽塔实得 2 条，全在 `脸` 的 `SDF` 组，
+   与事先的预判一致。
+
+#### 还欠的三处（都已在产物里显式标注）
+
+- `头发` 的 Noise Texture（发丝颗粒）用 0.5 均值占位。Scale 2000 属于逐像素级高频，
+  位置差一点噪声就完全去相关，真要复刻得连 Blender 的整数哈希一起搬。
+- `胸衣` 的 Voronoi（裙料上的细闪）用常量占位。关 bloom 后该材质 ΔE 只剩 2.02，
+  说明它此前 13.85 的误差主要来自 bloom，Voronoi 本身是小头。
+- `Texture Coordinate ▸ Generated` 用物体坐标代替（缺包围盒归一化）。上面两项要做
+  真的，得先把它补上。
 
 #### 架构决定：Python 出着色器，Unity 只负责绑定
 
-转译器写在 Python 侧（`Tools/PmxPipeline/`），产出两样东西：
+#### 架构决定：Python 出着色器，Unity 只负责绑定
+
+转译器写在 Python 侧（`Tools/PmxPipeline/transpile.py`），产出：
 
 ```
-<角色>.shader          生成的 HLSL
-<角色>.bindings.json   每个材质用哪个 shader、哪张贴图接哪个属性、标量参数、
-                       以及 blend_method / shadow_method / use_backface_culling
+Assets/Generated/PmxTranspiled/<角色>/shaders/M??.shader   每材质一个（已 gitignore）
+Assets/Generated/PmxTranspiled/<角色>/<角色>.bindings.json 装配清单 + LUT 浮点数据
+Build/RenderPreset/images/<角色>/                          从 .blend 解包出的 19 张贴图
 ```
+
+落地时与原设想的三处偏差：
+
+- **一材质一着色器**，不是一个大着色器。常量直接内联成字面量，贴图属性按需声明，
+  没有 uber-shader 的分支与变体问题。30 个无光照着色器的编译开销可以忽略。
+- **节点求值库内联进每个着色器**而不是 `.cginc`：生成物落在带中文名的目录下，
+  相对 include 路径多一层不确定性，而库只有两百多行。
+- **LUT 走 JSON 里的浮点数 + 运行时建 `RGBAFloat` 贴图**，不烤 PNG：表值在线性域，
+  8 位量化在 Filmic 曲线最陡的暗部会放大成可见色差，16 位 PNG 又要额外约定导入设置。
 
 Unity 侧只读 `bindings.json` 建材质，不参与图分析。这样分工的理由：
 
@@ -277,29 +357,42 @@ Unity 侧只读 `bindings.json` 建材质，不参与图分析。这样分工的
 **`bindings.json` 必须带混合状态**，不能只有贴图和颜色——`眼睛2` 那个 bug 的一半
 原因就是队列与混合模式错了（见上方 Phase 2 核验项）。
 
-#### 节点类型待实现清单
+#### 节点类型清单（已全部实现）
 
-由 `graph_ir.py` 按需展开后实测得出（丽塔全材质，随时可重新生成）：
+由 `graph_ir.py` 按需展开后实测得出（丽塔全材质，`graph_ir.py <graph.json>` 可随时重跑）：
 
 ```
-MATH 274   MIX 188   IMPLICIT_CONV 139   VECT_MATH 86   VALTORGB 82
-TEX_IMAGE 63   ATTRIBUTE 48   MAP_RANGE 40   NEW_GEOMETRY 32   SEPARATE_COLOR 31
-NORMAL_MAP 15  HUE_SAT 15  CURVE_RGB 8  MIX_RGB 6  MAPPING 3  TEX_COORD 3
-UVMAP 2  COMBXYZ 2  VECT_TRANSFORM 1  TEX_NOISE 1  TEX_VORONOI 1
-BSDF_TRANSPARENT 2  MIX_SHADER 2  BSDF_DIFFUSE 1  BSDF_GLOSSY 1
+MATH 274   MIX 188   IMPLICIT_CONV 137   VECT_MATH 86   VALTORGB 82
+TEX_IMAGE 63   ATTRIBUTE 48   MAP_RANGE 40   NEW_GEOMETRY 32   HUE_SAT 31
+SEPARATE_COLOR 31   CURVE_RGB 24   NORMAL_MAP 15   MIX_RGB 6   MAPPING 3
+TEX_COORD 3   UVMAP 2   COMBXYZ 2   VECT_TRANSFORM 1   TEX_NOISE 1   TEX_VORONOI 1
+BSDF_TRANSPARENT 2   MIX_SHADER 2   BSDF_DIFFUSE 1   BSDF_GLOSSY 1
 ```
 
-约 25 种，前 6 种覆盖大部分。BSDF_* 与 MIX_SHADER **全部来自 `表情` 一个材质**——
-它走 mmd_tools 的 `MMDShaderDev`（真 BSDF），是预设作者唯一没做风格化的材质。
-其余 29 个材质的输出要么是无光照自发光、要么是常量平涂，「预设是无光照纯函数」
-至此从判定性实验升级为逐材质核实。
+BSDF_* 与 MIX_SHADER **全部来自 `表情` 一个材质**——它走 mmd_tools 的
+`MMDShaderDev`（真 BSDF），是预设作者唯一没做风格化的材质。
 
-#### 待补的稳健性缺口
+闭包模型只用「辐射 + 透射」两项就覆盖了这四种节点，并与 EEVEE 的合成方式一致：
+`alpha = 1 - avg(transmittance)`、`RGB = radiance`。两条实测探针为它背书：
 
-- **导出器没有导 `is_active_output`。** Blender 允许一棵树里有多个 Material Output /
-  Group Output，但只有标记为活动的那个生效。目前 `graph_ir.py` 在遇到多个时取第一个
-  并告警。丽塔四个预设里暂未出现该情形，但换角色可能踩到，属于"静默取错分支"类问题。
-  修法：在 `export_blender_graph.py` 的 `NODE_PROPS` 里加上 `is_active_output`。
+- `Color` 直连 Surface，四种 blend_method 下输出 alpha **恒为 1**——颜色的 alpha
+  **不会**变成材质透明度（这个否定结论同样重要，它排除了「眼部细条要靠贴图 alpha
+  抠形」的猜想）。
+- 纯 Transparent BSDF（Color = 0.2724 灰）单独渲：RGB=0、alpha=0.7294；压在白色自
+  发光面前：0.5569 = sRGB(0.272394 × 1.0)。即透射项是**乘在背后颜色上**的。
+
+由此也定出一处待办：Unity 侧对 BLEND 材质用的是显示域混合，而 EEVEE 是**线性域合成
+后再过视图变换**。要彻底一致就得渲到离屏线性缓冲、末端统一做一次变换——这与 bloom
+的做法是同一件事，一并放进 Phase 2.5。
+
+#### 已补上的稳健性缺口
+
+- **`is_active_output`**（已加进 `NODE_PROPS`）。
+- **`interpolation` 此前根本没被导出。** 旧的节点图 JSON 里 TEX_IMAGE 全都没有这个
+  键——`NODE_PROPS` 是后来补的，而图没有重导。人脸 SDF 图用的 `Smart` 因此被当成
+  双线性。现已重导，实测 62 处 `Linear` + 1 处 `Smart`，与事先的预判完全一致。
+  教训：**导出器改了就必须重跑导出**，JSON 里缺键和值为空长得一样。
+- **`factor_mode`**（ShaderNodeMix 的 Factor 是统一还是逐分量）。
 
 #### 基准 PMX 的选定
 
@@ -322,7 +415,14 @@ BSDF_TRANSPARENT 2  MIX_SHADER 2  BSDF_DIFFUSE 1  BSDF_GLOSSY 1
 - [ ] 丽塔专有：`hairP`（Noise）、`胸衣`（Voronoi + Generated 坐标）
 - **闸门**：每一步的差异统计单调下降，且能定位到具体材质。
 
-> **核验项（2026-09-18 用户报告）**：Phase 0 基线里角色眼球顶部被一层浅蓝膜盖住，
+> **核验项已关闭（2026-09-19）**：眼睛问题在转译后**自愈**，两处成因都被消掉了——
+> 颜色不再来自 `PmxMaterialMapper` 写死的浅蓝，而是转译出的 `(0,0,0)` 近黑；队列也
+> 按 Blender 的 `blend_method = BLEND` 排进了透明队列（3000+）而不是 alpha-test 2458。
+> 三联对比图（`Build/RefDiff/对比-脸部-三联.png`）里右侧旧 UTS2 那只眼睛顶部的浅蓝
+> 缺块清晰可见，中间转译版没有。逐材质 ΔE：`眼睛2` 从 51.99 降到 10.72（关 bloom 后）。
+> 以下为当时的分析记录，保留备查。
+>
+> **原核验项（2026-09-18 用户报告）**：Phase 0 基线里角色眼球顶部被一层浅蓝膜盖住，
 > 看着像缺了一块。已查明该层是材质 `眼睛2`——PMX 里它本就无贴图、`alpha=0.300`，
 > 预设给的是 `(0, 0, 0, 0.3)` 近黑薄膜，而 `PmxMaterialMapper.cs:525` 把它按关键词
 > 归类成「眼睛」后刷成了写死的 `(0.82, 0.88, 1.0)` 浅蓝——正好相反的两端。
@@ -341,6 +441,25 @@ BSDF_TRANSPARENT 2  MIX_SHADER 2  BSDF_DIFFUSE 1  BSDF_GLOSSY 1
 > `use_backface_culling` 一并落到 Unity 材质的队列与混合状态上，不能只管颜色。
 >
 > 逐材质表里 `眼睛2` 那行（基线 ΔE 51.99）是客观判据。
+
+### Phase 2.5：离屏线性缓冲 + bloom（**由 Phase 4 提前至此**）
+
+提前的依据见 Phase 1 的验收数值：关掉 bloom 后平均 ΔE 直接减半。它已经不是「观感上
+的加分项」，而是当前最大的单一误差源。
+
+两件事其实是同一件事——都需要**渲到离屏线性 HDR 缓冲，在末端做一次逐像素合成**：
+
+- 视图变换目前逐材质在片元末端做。对不透明材质这完全正确；但对 `眼睛2` / `裙内侧`
+  这两个 BLEND 材质，Unity 是在显示域混合，而 EEVEE 是线性域合成后再变换。
+- bloom 必须在做视图变换**之前**、在线性域上取亮部。
+
+- [ ] 渲到 `RenderTextureFormat.ARGBHalf` 的线性缓冲，着色器只输出 scene-linear 辐射
+      与 alpha，不再各自做视图变换
+- [ ] 末端一个 alpha 感知的合成 pass：bloom（阈值/半径/强度/暖白色按插件写入的
+      `intensity 0.08`、`color #FFE4D9`）→ 视图变换 → 输出
+- [ ] 分层窗口下验证 alpha 不被破坏（这正是 ADR-0010 里踩过的坑，区别在于当年用的是
+      Unity 自带后处理栈，它直接丢 alpha；自写的 pass 可以让 alpha 跟着辉光一起外扩）
+- **闸门**：两边都开 bloom 时的差异，逼近现在「两边都关 bloom」的水平（平均 ΔE 2.17）。
 
 ### Phase 3：描边
 

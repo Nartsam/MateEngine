@@ -16,21 +16,36 @@
 不代表实际生效的设置——真正生效的由配套插件写入（bloom / Filmic / High Contrast），
 详见 Docs/RenderPreset/README.md。
 """
+import hashlib
 import json
 import os
+import re
 import sys
 
 import bpy
+
+# EEVEE 把 ColorRamp / RGB Curves 都烤成 CM_TABLE + 1 = 257 项的一维表，这个长度是
+# 写死的魔数。表由 Blender 自己求值（ColorRamp.evaluate / CurveMapping.evaluate），
+# 不在 Python 里重算 B 样条与贝塞尔——重算等于再实现一遍 colorband.cc 与
+# curve_mapping.cc，属于白担风险。
+CM_TABLE_SIZE = 257
+
+# 表内容 -> key。同一条 ramp 在多个材质里复用，按内容去重后整份 JSON 只多几十 KB。
+LUTS = {}
+LUT_WARNINGS = []
 
 
 def parse_args():
     argv = sys.argv
     argv = argv[argv.index("--") + 1:] if "--" in argv else []
     out = None
+    images = None
     for i, a in enumerate(argv):
         if a == "--out" and i + 1 < len(argv):
             out = argv[i + 1]
-    return out
+        elif a == "--images" and i + 1 < len(argv):
+            images = argv[i + 1]
+    return out, images
 
 
 def val(v):
@@ -62,7 +77,20 @@ NODE_PROPS = (
     # - voronoi_dimensions / distance: Voronoi metric
     "clamp_factor", "clamp_result", "interpolation",
     "voronoi_dimensions", "distance",
+    # - is_active_output: 一棵树里可以有多个 Material Output / Group Output，只有
+    #   活动的那个生效。不导它就只能「取第一个」，属于静默取错分支。
+    # - factor_mode: ShaderNodeMix 的 Factor 是统一还是逐分量，决定读哪个插槽。
+    "is_active_output", "factor_mode",
 )
+
+
+def _lut_key(kind, payload, table):
+    h = hashlib.sha1(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+    key = "%s_%s" % (kind, h)
+    LUTS.setdefault(key, {"kind": kind, "size": len(table), "table": table})
+    return key
 
 
 def dump_curve_mapping(cm):
@@ -91,13 +119,51 @@ def dump_curve_mapping(cm):
                 for p in c.points
             ],
         })
+    out["table_key"] = _curve_table_key(cm, out)
     return out
+
+
+def _curve_table_key(cm, payload):
+    """烤 RGB 曲线的 257 项表。
+
+    Blender 的求值顺序是「先逐通道曲线、再合成曲线」（BKE_curvemapping_premultiply
+    把 cm[3] 复合进 cm[0..2] 的 premul_table），EEVEE 采样的就是复合后的表。
+    cm[3] 是 UI 上的 C 通道，cm[0..2] 是 R/G/B。
+    """
+    n = len(cm.curves)
+    if n < 4:
+        LUT_WARNINGS.append("曲线只有 %d 条，按逐通道恒等处理" % n)
+    combined = cm.curves[3] if n >= 4 else None
+
+    # 表的定义域是各通道首末控制点的 x（Blender 的 mintable/maxtable）。Python 不
+    # 暴露这两个值，用控制点反推；本项目四个预设全是 [0,1]，越界就报警而不是默默
+    # 按 [0,1] 烤。
+    for i, c in enumerate(cm.curves):
+        if not c.points:
+            continue
+        x0, x1 = c.points[0].location[0], c.points[-1].location[0]
+        if abs(x0) > 1e-6 or abs(x1 - 1.0) > 1e-6:
+            LUT_WARNINGS.append(
+                "曲线通道 %d 的定义域是 [%.4f, %.4f]，不是 [0,1]，"
+                "烤表按 [0,1] 采样会偏" % (i, x0, x1))
+
+    table = []
+    for i in range(CM_TABLE_SIZE):
+        x = i / float(CM_TABLE_SIZE - 1)
+        row = []
+        for ch in range(3):
+            v = cm.evaluate(cm.curves[ch], x) if ch < n else x
+            row.append(cm.evaluate(combined, v) if combined else v)
+        # 第 4 项对齐 BKE_curvemapping_table_RGBA 的布局（它放的是 cm[3] 自己的表）
+        row.append(cm.evaluate(combined, x) if combined else x)
+        table.append(row)
+    return _lut_key("curve", payload, table)
 
 
 def dump_color_ramp(ramp):
     if ramp is None:
         return None
-    return {
+    d = {
         "color_mode": ramp.color_mode,
         "interpolation": ramp.interpolation,
         "hue_interpolation": getattr(ramp, "hue_interpolation", None),
@@ -106,6 +172,12 @@ def dump_color_ramp(ramp):
             for e in ramp.elements
         ],
     }
+    # ColorRamp.evaluate 就是 BKE_colorband_evaluate，与 EEVEE 烤表用的是同一个函数
+    d["table_key"] = _lut_key("ramp", d, [
+        list(ramp.evaluate(i / float(CM_TABLE_SIZE - 1)))
+        for i in range(CM_TABLE_SIZE)
+    ])
+    return d
 
 
 def dump_image(img):
@@ -275,10 +347,70 @@ def dump_objects():
     return objs
 
 
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _image_basename(img):
+    """把 Blender 的图片数据块名变成一个安全的 PNG 文件名。
+
+    数据块名常带原扩展名与去重后缀（`眼睛.png`、`hair_s.bmp.001`、`裙子.png.001`），
+    直接拼 `.png` 会得到 `眼睛.png.png` 这类名字，先剥掉。
+    """
+    name = _UNSAFE.sub("_", img.name).strip()
+    name = re.sub(r"\.(\d{3})$", r"_\1", name)
+    name = re.sub(r"\.(png|jpg|jpeg|tga|bmp|tif|tiff|exr|dds|psd)$", "",
+                  name, flags=re.IGNORECASE)
+    return (name or "image") + ".png"
+
+
+def extract_images(out_dir):
+    """把预设内**打包**的贴图全部落成 PNG，供 Unity 侧直接读字节。
+
+    预设里 19 张图全是 packed=True，原始文件在作者机器上，本机不存在——不导出就
+    没法在 Unity 里复现任何贴图采样。用 Image.save() 写的是像素缓冲本身，不过
+    色彩管理；色彩空间（sRGB / Non-Color）随清单一起交给 Unity 决定采样时怎么解码。
+    """
+    out_dir = os.path.abspath(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    manifest = []
+    for img in bpy.data.images:
+        if img.size[0] == 0 or img.size[1] == 0:
+            print("[export_graph] 跳过空图片 %r" % img.name)
+            continue
+        fname = _image_basename(img)
+        # 必须传绝对路径并显式给 filepath：Image.save() 用的是 image.filepath，
+        # 而那是 blend 相对路径（`//原始模型\...`），指向作者机器上的目录。
+        path = os.path.join(out_dir, fname)
+        prev_format = img.file_format
+        try:
+            img.file_format = "PNG"
+            img.save(filepath=path)
+            ok = os.path.exists(path)
+            if not ok:
+                print("[export_graph] 导出贴图无输出 %r -> %s" % (img.name, path))
+        except Exception as e:                                  # noqa: BLE001
+            print("[export_graph] 导出贴图失败 %r: %s" % (img.name, e))
+            ok = False
+        finally:
+            img.file_format = prev_format
+        if not ok:
+            continue
+        manifest.append({
+            "name": img.name, "file": fname,
+            "colorspace": getattr(img.colorspace_settings, "name", None),
+            "alpha_mode": getattr(img, "alpha_mode", None),
+            "size": [img.size[0], img.size[1]],
+            "channels": img.channels,
+        })
+    with open(os.path.join(out_dir, "images.json"), "w", encoding="utf-8") as f:
+        json.dump({"images": manifest}, f, ensure_ascii=False, indent=1)
+    print("[export_graph] 导出贴图 %d 张 -> %s" % (len(manifest), out_dir))
+
+
 def main():
-    out_path = parse_args()
+    out_path, images_dir = parse_args()
     data = {
-        "formatVersion": 2,
+        "formatVersion": 3,
         "blender": bpy.app.version_string,
         "file": bpy.data.filepath,
         "scene": dump_scene(),
@@ -301,11 +433,17 @@ def main():
                    for w in bpy.data.worlds},
         "images": [dump_image(i) for i in bpy.data.images],
     }
+    # luts 必须在所有树 dump 完之后再取——表是遍历过程中攒出来的
+    data["luts"] = LUTS
+    for w in sorted(set(LUT_WARNINGS)):
+        print("[export_graph] !! %s" % w)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     print(f"[export_graph] groups={len(data['node_groups'])} "
-          f"materials={len(data['materials'])} -> {out_path}")
+          f"materials={len(data['materials'])} luts={len(LUTS)} -> {out_path}")
+    if images_dir:
+        extract_images(images_dir)
 
 
 if __name__ == "__main__":

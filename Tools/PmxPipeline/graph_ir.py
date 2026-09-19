@@ -65,6 +65,10 @@ class FlatNode:
     input_names: dict = field(default_factory=dict)  # ident -> 可读名，便于调试
     outputs: dict = field(default_factory=dict)      # ident -> 类型
     path: str = ""                                   # 组内来源路径，排错用
+    # 节点自身那一侧**完全没有连线**的输入插槽。Blender 对部分插槽在「无连线」时
+    # 有隐式默认来源（Image Texture 的 Vector 取活动 UV，噪声类取 Generated 坐标），
+    # 与「连着一条线但上游算出同一个值」语义不同，代码生成器必须能区分。
+    unlinked: set = field(default_factory=set)
 
 
 class GraphError(Exception):
@@ -73,6 +77,31 @@ class GraphError(Exception):
 
 def socket_list(node, key):
     return [s for s in node.get(key, []) if s.get("identifier") != EXTEND_SOCKET]
+
+
+def active_inputs(node):
+    """返回该节点**真正参与求值**的输入插槽标识符集合，未知类型返回 None。
+
+    ShaderNodeMix / ShaderNodeMapRange 为每种 data_type 各备了一套插槽，Blender 只
+    对活动的那一套求值。作者切换过类型的残留连线会挂在非活动插槽上（本预设里有 8
+    条，全在 `SDF` 组），照单全收会把死分支拉进图里，读错则人脸阴影完全不对。
+    """
+    t = node["type"]
+    if t == "MIX":
+        dt = node.get("data_type", "FLOAT")
+        if dt == "RGBA":
+            return {"Factor_Float", "A_Color", "B_Color"}
+        if dt == "VECTOR":
+            fac = ("Factor_Vector" if node.get("factor_mode") == "NON_UNIFORM"
+                   else "Factor_Float")
+            return {fac, "A_Vector", "B_Vector"}
+        return {"Factor_Float", "A_Float", "B_Float"}
+    if t == "MAP_RANGE":
+        if node.get("data_type") == "FLOAT_VECTOR":
+            return {"Vector", "From_Min_FLOAT3", "From_Max_FLOAT3",
+                    "To_Min_FLOAT3", "To_Max_FLOAT3", "Steps_FLOAT3"}
+        return {"Value", "From Min", "From Max", "To Min", "To Max", "Steps"}
+    return None
 
 
 class Graph:
@@ -193,12 +222,16 @@ class Expander:
         return Ref(flat_id, socket, self._socket_type(node, "outputs", socket))
 
     def _resolve_reroute(self, tree, node):
-        link = tree.incoming.get(node["name"], {}).get("Input")
-        if link is None:
-            for s in socket_list(node, "inputs"):
-                return Const(s.get("default"), s["type"])
-            return None
-        return self._resolve_output(tree, link["from_node"], link["from_socket"])
+        # Reroute 只有一个输入，但它的插槽标识符**不固定**：本预设 18 个 Reroute 里
+        # 13 个是 `Input`，3 个是 `input.001`，2 个是 `input`。按名字找会静默断链
+        # ——上游被当成「没接线」，于是取插槽默认值（黑），整条链直接算成黑色。
+        links = tree.incoming.get(node["name"], {})
+        if links:
+            link = next(iter(links.values()))
+            return self._resolve_output(tree, link["from_node"], link["from_socket"])
+        for s in socket_list(node, "inputs"):
+            return Const(s.get("default"), s["type"])
+        return None
 
     def _resolve_group(self, tree, node, socket):
         gname = node.get("group")
@@ -241,10 +274,21 @@ class Expander:
         # 先登记再解输入，这样自引用会被上面的环检测抓到
         self.nodes[flat_id] = fn
 
+        active = active_inputs(node)
+        incoming = tree.incoming.get(node["name"], {})
         for s in socket_list(node, "inputs"):
             ident = s["identifier"]
-            fn.inputs[ident] = self._resolve_input(tree, node, ident)
             fn.input_names[ident] = s["name"]
+            if active is not None and ident not in active:
+                if ident in incoming:
+                    self.warnings.append(
+                        f"{flat_id} 的非活动插槽 {ident} 上挂着连线"
+                        f"（data_type={node.get('data_type')}），已按 Blender 语义忽略")
+                fn.inputs[ident] = Const(s.get("default"), s["type"])
+                continue
+            if ident not in incoming:
+                fn.unlinked.add(ident)
+            fn.inputs[ident] = self._resolve_input(tree, node, ident)
 
         self._emitting.discard(flat_id)
         self.order.append(flat_id)   # 输入先入序，天然是拓扑序
