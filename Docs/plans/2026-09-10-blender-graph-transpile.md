@@ -577,12 +577,71 @@ Phase 4 要把它挪进 `PmxMeshBuilder`，`.me` 才会带描边。
 **不存在系统性偏移**，剩下的 `眉毛`（ΔE 11，约 100 px）是细条上真实的亚像素噪声，
 不是 bug——它与 `眼白`（ΔE 0.38）走的是同一张 10 节点的图，只有 HueSat 的 Value 不同。
 
-### Phase 4：集成与验收
+### Phase 4：集成与验收（进行中）
 
-- [ ] 接进 `materialProfile`，走 `ExportMe` 出 `.me`
+#### 哪些能烘进离线文件，哪些必须改管线（2026-09-19 定论）
+
+这三类东西性质完全不同，不要笼统说成「用了 MateEngine 不支持的高级特性」：
+
+| 东西 | 能否烘进 `.me` | 说明 |
+|---|---|---|
+| 逐材质着色（贴图 / LUT / ramp / 法线贴图 / matcap / SDF / 程序化噪声） | **能** | 转译产物就是普通 Built-in RP 无光照着色器，不要求管线支持任何特性 |
+| 描边 | **能** | 是实体化外壳，就是网格里多出来的三个子网格 |
+| Filmic + High Contrast 视图变换 | **能**（逐材质做，现状即如此） | 对不透明材质数学上精确。只有两个 `BLEND` 材质（`眼睛2` / `裙内侧`）有偏差：EEVEE 在线性域合成后才做变换，逐材质做只能在显示域混合 |
+| **bloom** | **不能** | 屏幕空间效果，按定义装不进模型文件 |
+
+所以**必须改管线的只有 bloom 一项**。其余部分 App 现有管线原样就能跑。
+
+但 bloom 值 ΔE 从 4.17 降到 1.86，正是「偏暗」与「明亮鲜艳」那个差别，不是可有可无。
+而且一旦有了线性 HDR 缓冲，视图变换顺势移到末端，上面那两个 BLEND 材质的偏差也一并
+消掉——改一次解决两件事。
+
+#### 需要的三处改动
+
+1. **3D 相机开 HDR、渲到线性缓冲**（`allowHDR` + `ARGBHalf`）。不开 HDR 的话亮部在
+   1.0 被夹掉，bloom 取不到亮度——Filmic 把线性 8.0 映射到 0.993，亮部信息全在 1.0
+   以上。
+2. **一个 alpha 感知的全屏合成 pass**：bloom → 视图变换 → 输出。代码已就位，
+   `Assets/PmxTranspileRuntime/MEPostCompose.{shader,cs}`，差分闭环里已经在用。
+   着色器侧靠全局 `_MEDeferViewTransform` 切换（未设置时材质自己做变换，保证单独用
+   也是对的）。
+3. **把 UI 隔在合成之外。** App 只有一个主相机，它同时画角色和 Screen-Space-Camera
+   的菜单画布。直接加全屏 pass 会把菜单一起变换，**正是 ADR-0010 里被用户否掉的那个
+   毛病**（`RenderStyleManager.cs` 里那段 `GradeEnabled = false` 的注释记着原委）。
+   两种做法：(a) 新增一个只渲 3D 内容的相机、输出到 HDR 缓冲，主相机只画 UI；
+   (b) 把菜单画布改成 Screen-Space-Overlay。
+
+> **用户 2026-09-19 已选定 A 路线**（改造管线）。理由是：不改就做不到效果一致，
+> 前面的工作等于白做。
+
+#### 待决：轮廓外的辉光要不要在分层窗口里显示
+
+实测 Blender 的 bloom **只写 RGB、不动 alpha**：带 bloom 的基准图里轮廓外有 314456 个
+像素 RGB 非零（最高 95/255），而 alpha 仍为 0；半透明像素数与不带 bloom 时完全一致
+（都是 8828 个）。
+
+分层窗口按 alpha 合成，alpha=0 的像素完全透明、RGB 不参与显示。所以**照搬 Blender
+的话，轮廓外那圈辉光在 App 里是看不见的**。轮廓内（alpha=1）的辉光正常显示——「偏暗」
+那件事靠的就是这部分，所以主要收益不受影响。
+
+要让外圈辉光可见，得主动把 alpha 跟着辉光外扩（例如 `alpha = max(alpha, luma(bloom) × k)`）。
+这是**有意偏离 Blender 输出**：差分数值会略变差，但 App 观感更接近用户在 Blender 里
+看到的样子（Blender 图像编辑器默认按 RGB 显示、忽略 alpha，所以那边肩臂外的辉光是
+看得见的）。
+
+**建议等能在 App 里实际看到再定**，不要凭空决定。
+
+#### 待办
+
+- [ ] 描边外壳挪进 `PmxMeshBuilder`，prefab / `.me` 自带（现在只在 `MERefRenderer`
+      渲染时并进去）
+- [ ] 转译材质落成**真正的资产**（Material / Texture2D / LUT 贴图），否则 prefab 与
+      AssetBundle 序列化不进去。现在它们是运行时 `new` 出来的
+- [ ] 接进 `materialProfile = "transpiled"`，走 `ExportMe` 出 `.me`
+- [ ] 按 A 路线改造相机与合成 pass
 - [ ] AssetBundle 变体不剥离（自生成的着色器变体确定，风险低于 lilToon）
 - [ ] App 内实测：透明窗口、动画、移动窗口下渲染稳定
-- [ ] 决定 bloom 方案
+- [ ] 定辉光 alpha 外扩方案
 - [ ] 写 ADR，更新 `ARCHITECTURE.md` / `PROGRESS.md`
 
 ## 风险与回退
