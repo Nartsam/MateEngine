@@ -232,6 +232,213 @@ float3 ME_ViewTransform(sampler2D lut, float row, float rows, float3 x, float lo
                   ME_SampleBand(lut, row, rows, t.b).r);
 }
 
+// ---- Generated 纹理坐标 ----------------------------------------------------
+// Blender 的 Generated（ORCO）是「物体包围盒归一化坐标」。这里的包围盒由 Unity 侧
+// 从网格 bounds 换算后写进 uniform。
+//
+// 注意坐标系：Unity 的局部坐标已经过 U = (-Bx, Bz, -By) 转换，要先转回 Blender 物体
+// 空间再归一化，否则轴会错位——程序化纹理靠坐标吃饭，轴错了花纹方向就全变。
+// 另一处近似：蒙皮网格在 Unity 的顶点着色器里拿到的是**已变形**的位置，而 Blender 的
+// ORCO 取自静止姿势。差分渲染用的是 bindpose，两者相等；做动画时会有轻微漂移。
+float3 _MEGenMin;
+float3 _MEGenInvSize;
+
+float3 ME_Generated(float3 opos)
+{
+    float3 b = float3(-opos.x, -opos.z, opos.y);
+    return (b - _MEGenMin) * _MEGenInvSize;
+}
+
+// ---- Blender 的整数哈希（hash.glsl 的 Jenkins lookup3）---------------------
+// 程序化噪声与 Voronoi 全靠它。位运算必须逐位照抄：改一个常量，花纹就完全是另一张图。
+uint ME_rotl(uint x, uint k) { return (x << k) | (x >> (32u - k)); }
+
+void ME_hash_final(inout uint a, inout uint b, inout uint c)
+{
+    c ^= b; c -= ME_rotl(b, 14u);
+    a ^= c; a -= ME_rotl(c, 11u);
+    b ^= a; b -= ME_rotl(a, 25u);
+    c ^= b; c -= ME_rotl(b, 16u);
+    a ^= c; a -= ME_rotl(c, 4u);
+    b ^= a; b -= ME_rotl(a, 14u);
+    c ^= b; c -= ME_rotl(b, 24u);
+}
+
+void ME_hash_mix(inout uint a, inout uint b, inout uint c)
+{
+    a -= c; a ^= ME_rotl(c, 4u);  c += b;
+    b -= a; b ^= ME_rotl(a, 6u);  a += c;
+    c -= b; c ^= ME_rotl(b, 8u);  b += a;
+    a -= c; a ^= ME_rotl(c, 16u); c += b;
+    b -= a; b ^= ME_rotl(a, 19u); a += c;
+    c -= b; c ^= ME_rotl(b, 4u);  b += a;
+}
+
+uint ME_hash_uint2(uint kx, uint ky)
+{
+    uint a, b, c;
+    a = b = c = 0xdeadbeefu + (2u << 2u) + 13u;
+    b += ky; a += kx;
+    ME_hash_final(a, b, c);
+    return c;
+}
+
+uint ME_hash_uint3(uint kx, uint ky, uint kz)
+{
+    uint a, b, c;
+    a = b = c = 0xdeadbeefu + (3u << 2u) + 13u;
+    c += kz; b += ky; a += kx;
+    ME_hash_final(a, b, c);
+    return c;
+}
+
+uint ME_hash_uint4(uint kx, uint ky, uint kz, uint kw)
+{
+    uint a, b, c;
+    a = b = c = 0xdeadbeefu + (4u << 2u) + 13u;
+    a += kx; b += ky; c += kz;
+    ME_hash_mix(a, b, c);
+    a += kw;
+    ME_hash_final(a, b, c);
+    return c;
+}
+
+float ME_uint_to_float01(uint k) { return float(k) / 4294967295.0; }
+// 浮点版哈希吃的是**浮点数的位模式**，不是取整后的格点，asuint 不能换成强制转换
+float ME_hash_v2f(float2 k) { return ME_uint_to_float01(ME_hash_uint2(asuint(k.x), asuint(k.y))); }
+float ME_hash_v3f(float3 k) { return ME_uint_to_float01(ME_hash_uint3(asuint(k.x), asuint(k.y), asuint(k.z))); }
+float ME_hash_v4f(float4 k) { return ME_uint_to_float01(ME_hash_uint4(asuint(k.x), asuint(k.y), asuint(k.z), asuint(k.w))); }
+
+float3 ME_hash_v3v3(float3 k)
+{
+    return float3(ME_hash_v3f(k),
+                  ME_hash_v4f(float4(k, 1.0)),
+                  ME_hash_v4f(float4(k, 2.0)));
+}
+
+float3 ME_random_vec3_offset(float seed)
+{
+    return float3(100.0 + ME_hash_v2f(float2(seed, 0.0)) * 100.0,
+                  100.0 + ME_hash_v2f(float2(seed, 1.0)) * 100.0,
+                  100.0 + ME_hash_v2f(float2(seed, 2.0)) * 100.0);
+}
+
+// ---- Perlin 噪声（gpu_shader_material_noise.glsl）--------------------------
+float ME_noise_fade(float t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
+
+float ME_noise_grad(uint hash, float x, float y, float z)
+{
+    uint h = hash & 15u;
+    float u = h < 8u ? x : y;
+    float vt = ((h == 12u) || (h == 14u)) ? x : z;
+    float v = h < 4u ? y : vt;
+    float r = ((h & 1u) != 0u) ? -u : u;
+    return r + (((h & 2u) != 0u) ? -v : v);
+}
+
+float ME_tri_mix(float v0, float v1, float v2, float v3,
+                 float v4, float v5, float v6, float v7,
+                 float x, float y, float z)
+{
+    float x1 = 1.0 - x, y1 = 1.0 - y, z1 = 1.0 - z;
+    return z1 * (y1 * (v0 * x1 + v1 * x) + y * (v2 * x1 + v3 * x)) +
+           z  * (y1 * (v4 * x1 + v5 * x) + y * (v6 * x1 + v7 * x));
+}
+
+float ME_noise_perlin(float3 v)
+{
+    float3 Xi = floor(v);
+    float3 Xf = v - Xi;
+    float3 u = float3(ME_noise_fade(Xf.x), ME_noise_fade(Xf.y), ME_noise_fade(Xf.z));
+    int3 X = (int3)Xi;
+    uint x0 = asuint(X.x), y0 = asuint(X.y), z0 = asuint(X.z);
+    uint x1 = asuint(X.x + 1), y1 = asuint(X.y + 1), z1 = asuint(X.z + 1);
+
+    float r = ME_tri_mix(
+        ME_noise_grad(ME_hash_uint3(x0, y0, z0), Xf.x,       Xf.y,       Xf.z),
+        ME_noise_grad(ME_hash_uint3(x1, y0, z0), Xf.x - 1.0, Xf.y,       Xf.z),
+        ME_noise_grad(ME_hash_uint3(x0, y1, z0), Xf.x,       Xf.y - 1.0, Xf.z),
+        ME_noise_grad(ME_hash_uint3(x1, y1, z0), Xf.x - 1.0, Xf.y - 1.0, Xf.z),
+        ME_noise_grad(ME_hash_uint3(x0, y0, z1), Xf.x,       Xf.y,       Xf.z - 1.0),
+        ME_noise_grad(ME_hash_uint3(x1, y0, z1), Xf.x - 1.0, Xf.y,       Xf.z - 1.0),
+        ME_noise_grad(ME_hash_uint3(x0, y1, z1), Xf.x,       Xf.y - 1.0, Xf.z - 1.0),
+        ME_noise_grad(ME_hash_uint3(x1, y1, z1), Xf.x - 1.0, Xf.y - 1.0, Xf.z - 1.0),
+        u.x, u.y, u.z);
+    return isinf(r) ? 0.0 : 0.9820 * r;      // noise_scale3
+}
+
+float ME_noise01(float3 p) { return 0.5 * ME_noise_perlin(p) + 0.5; }
+
+float ME_fractal_noise(float3 p, float octaves, float roughness)
+{
+    float fscale = 1.0, amp = 1.0, maxamp = 0.0, sum = 0.0;
+    octaves = clamp(octaves, 0.0, 15.0);
+    int n = int(octaves);
+    for (int i = 0; i <= n; i++)
+    {
+        sum += ME_noise01(fscale * p) * amp;
+        maxamp += amp;
+        amp *= clamp(roughness, 0.0, 1.0);
+        fscale *= 2.0;
+    }
+    float rmd = octaves - floor(octaves);
+    if (rmd != 0.0)
+    {
+        float sum2 = sum + ME_noise01(fscale * p) * amp;
+        return (1.0 - rmd) * (sum / maxamp) + rmd * (sum2 / (maxamp + amp));
+    }
+    return sum / maxamp;
+}
+
+void ME_NoiseTexture3D(float3 co, float scale, float detail, float roughness,
+                       float distortion, out float value, out float4 color)
+{
+    float3 p = co * scale;
+    if (distortion != 0.0)
+    {
+        p += float3(ME_noise_perlin(p + ME_random_vec3_offset(0.0)) * distortion,
+                    ME_noise_perlin(p + ME_random_vec3_offset(1.0)) * distortion,
+                    ME_noise_perlin(p + ME_random_vec3_offset(2.0)) * distortion);
+    }
+    value = ME_fractal_noise(p, detail, roughness);
+    color = float4(value,
+                   ME_fractal_noise(p + ME_random_vec3_offset(3.0), detail, roughness),
+                   ME_fractal_noise(p + ME_random_vec3_offset(4.0), detail, roughness),
+                   1.0);
+}
+
+// ---- Voronoi F1 3D（欧氏距离）---------------------------------------------
+// 27 个相邻格子 × 每格 3 次哈希，不便宜。本预设只有 `胸衣` 用到，面积很小。
+void ME_VoronoiF1_3D(float3 coord, float scale, float randomness,
+                     out float outDistance, out float4 outColor, out float3 outPosition)
+{
+    float3 c = coord * scale;
+    float3 cellPosition = floor(c);
+    float3 localPosition = c - cellPosition;
+
+    float minDistance = 8.0;
+    float3 targetOffset = float3(0, 0, 0);
+    float3 targetPosition = float3(0, 0, 0);
+    for (int k = -1; k <= 1; k++)
+    for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++)
+    {
+        float3 cellOffset = float3(i, j, k);
+        float3 pointPosition = cellOffset +
+            ME_hash_v3v3(cellPosition + cellOffset) * randomness;
+        float d = distance(pointPosition, localPosition);
+        if (d < minDistance)
+        {
+            targetOffset = cellOffset;
+            minDistance = d;
+            targetPosition = pointPosition;
+        }
+    }
+    outDistance = minDistance;
+    outColor = float4(ME_hash_v3v3(cellPosition + targetOffset), 1.0);
+    outPosition = (scale != 0.0) ? (targetPosition + cellPosition) / scale : float3(0, 0, 0);
+}
+
 // ---- Blender 相机空间 ------------------------------------------------------
 // Blender 场景到 Unity 场景的映射是 U = (-B.x, B.z, -B.y)，行列式 -1（右手变左手）。
 // 点积在正交变换下不变，所以 SUN / FRONT / RIGHT 那套只要一起映射就自动对上；但

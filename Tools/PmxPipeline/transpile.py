@@ -287,11 +287,7 @@ class MaterialEmitter:
         self.put(n, "Window", "float3(i.screen.xy / max(i.screen.w, 1e-6), 0.0)", "VECTOR")
         self.put(n, "Camera", "mul(UNITY_MATRIX_V, float4(i.wpos, 1.0)).xyz", "VECTOR")
         self.put(n, "Reflection", "reflect(-I, N)", "VECTOR")
-        # Generated 是物体包围盒归一化坐标，需要包围盒 uniform，Phase 2 再接
-        self.put(n, "Generated", "objPos", "VECTOR")
-        if "Generated" in needed:
-            self.notes.append("Texture Coordinate ▸ Generated 暂用物体坐标代替"
-                              "（缺包围盒归一化）")
+        self.put(n, "Generated", "ME_Generated(i.opos)", "VECTOR")
 
     def _n_uvmap(self, n, needed):
         uv = n.props.get("uv_map") or ""
@@ -525,20 +521,41 @@ class MaterialEmitter:
         self.put(n, "Vector", self.decl("VECTOR", e, "vtrans"), "VECTOR")
 
     def _n_tex_noise(self, n, needed):
-        # TODO(Phase 2)：Blender 的 Perlin 噪声 + Generated 坐标都还没落地。
-        # 本预设里唯一一处是 `头发` 的发丝颗粒，Scale 2000 属于逐像素级高频，
-        # 位置只要差一点噪声就完全去相关，因此先用均值占位。
-        self.notes.append("Noise Texture 用 0.5 均值占位（发丝颗粒缺失）")
-        v = self.decl("VALUE", "0.5", "noisestub")
-        self.put(n, "Fac", v, "VALUE")
-        self.put(n, "Color", "float4(%s, %s, %s, 1.0)" % (v, v, v), "RGBA")
+        if (n.props.get("noise_dimensions") or "3D") != "3D":
+            raise Unsupported("Noise Texture %s 维未实现" % n.props.get("noise_dimensions"))
+        # Vector 未接线时 Blender 取 Generated（物体包围盒归一化坐标），不是 (0,0,0)
+        co = ("ME_Generated(i.opos)" if "Vector" in n.unlinked
+              else self.val(n, "Vector", "VECTOR"))
+        val = self.tmp("noiseV")
+        col = self.tmp("noiseC")
+        self.lines.append("    float %s; float4 %s;" % (val, col))
+        self.lines.append(
+            "    ME_NoiseTexture3D(%s, %s, %s, %s, %s, %s, %s);"
+            % (co, self.val(n, "Scale", "VALUE"), self.val(n, "Detail", "VALUE"),
+               self.val(n, "Roughness", "VALUE"), self.val(n, "Distortion", "VALUE"),
+               val, col))
+        self.put(n, "Fac", val, "VALUE")
+        self.put(n, "Color", col, "RGBA")
 
     def _n_tex_voronoi(self, n, needed):
-        self.notes.append("Voronoi Texture 用常量占位（胸衣的程序化花纹缺失）")
-        v = self.decl("VALUE", "0.5", "voronoistub")
-        self.put(n, "Distance", v, "VALUE")
-        self.put(n, "Color", "float4(%s, %s, %s, 1.0)" % (v, v, v), "RGBA")
-        self.put(n, "Position", "float3(0.0, 0.0, 0.0)", "VECTOR")
+        dim = n.props.get("voronoi_dimensions") or "3D"
+        feature = n.props.get("feature") or "F1"
+        metric = n.props.get("distance") or "EUCLIDEAN"
+        if dim != "3D" or feature != "F1" or metric != "EUCLIDEAN":
+            raise Unsupported("Voronoi %s/%s/%s 未实现" % (dim, feature, metric))
+        co = ("ME_Generated(i.opos)" if "Vector" in n.unlinked
+              else self.val(n, "Vector", "VECTOR"))
+        d = self.tmp("vorD")
+        c = self.tmp("vorC")
+        p = self.tmp("vorP")
+        self.lines.append("    float %s; float4 %s; float3 %s;" % (d, c, p))
+        self.lines.append(
+            "    ME_VoronoiF1_3D(%s, %s, %s, %s, %s, %s);"
+            % (co, self.val(n, "Scale", "VALUE"), self.val(n, "Randomness", "VALUE"),
+               d, c, p))
+        self.put(n, "Distance", d, "VALUE")
+        self.put(n, "Color", c, "RGBA")
+        self.put(n, "Position", p, "VECTOR")
         self.put(n, "W", "0.0", "VALUE")
         self.put(n, "Radius", "0.0", "VALUE")
 
@@ -607,6 +624,10 @@ Shader "{shader_name}"
             float3 _MESunDir;
             float3 _MEHeadFront;
             float3 _MEHeadRight;
+            // 全局开关：1 = 只输出 scene-linear 辐射，bloom 与视图变换交给离屏合成
+            // pass（Assets/PmxTranspileRuntime/MEPostCompose）。未设置时为 0，材质
+            // 自己做视图变换——单独拿这个材质用（编辑器预览、不走合成的场合）也是对的。
+            float _MEDeferViewTransform;
 {samplers}
 
             struct appdata
@@ -659,10 +680,9 @@ Shader "{shader_name}"
 
                 MEClosure cl = {root};
                 float alpha = ME_ClosureAlpha(cl);
-                // 视图变换在片元末端逐像素做：全屏后处理会破坏分层窗口的逐像素
-                // alpha（见 ADR-0010 / 记忆 no-fullscreen-postprocessing-transparent-window）
-                float3 disp = ME_ViewTransform(_MELut, 0.0, ME_LUT_ROWS,
-                                               max(cl.radiance, 0.0),
+                float3 lin = max(cl.radiance, 0.0);
+                if (_MEDeferViewTransform > 0.5) return float4(lin, alpha);
+                float3 disp = ME_ViewTransform(_MELut, 0.0, ME_LUT_ROWS, lin,
                                                ME_VT_LO, ME_VT_HI);
                 return float4(disp, alpha);
             }}
@@ -715,7 +735,11 @@ BLEND_STATE = {
     "OPAQUE": ("Opaque", "Geometry", "On", "Off", 2000),
     "CLIP": ("TransparentCutout", "AlphaTest", "On", "Off", 2450),
     "HASHED": ("Opaque", "Geometry", "On", "Off", 2000),
-    "BLEND": ("Transparent", "Transparent", "Off", "SrcAlpha OneMinusSrcAlpha", 3000),
+    # 预乘混合而不是 SrcAlpha OneMinusSrcAlpha：闭包模型里输出的 rgb 是**辐射**，
+    # 本身就已经是「这块表面自己发出多少光」，背后的贡献由透射项 (1 - alpha) 决定。
+    # 实测 Blender：纯 Transparent BSDF 压在白色自发光面前得 sRGB(0.272394 × 1.0)，
+    # 即透射是乘在背后颜色上的，与 One OneMinusSrcAlpha 一致。
+    "BLEND": ("Transparent", "Transparent", "Off", "One OneMinusSrcAlpha", 3000),
 }
 
 

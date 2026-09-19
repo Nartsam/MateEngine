@@ -152,7 +152,8 @@ namespace MateEngine.PmxPipeline
 
                 int res = GetIntArg("-res", 1024);
                 string bg = GetArg("-bg") ?? "transparent";
-                Render(cam, res, bg, outPng);
+                var compose = MakeComposeSettings(transpiled, blenderReport, report);
+                Render(cam, res, bg, outPng, compose);
                 report["render"] = new Dictionary<string, object>
                 {
                     ["path"] = Path.GetFullPath(outPng), ["res"] = res, ["bg"] = bg,
@@ -208,6 +209,7 @@ namespace MateEngine.PmxPipeline
             t.SetDirections(BlenderToUnity(sun).normalized,
                             BlenderToUnity(front).normalized,
                             BlenderToUnity(right).normalized);
+            t.SetGeneratedBounds(root);
             t.Apply(root);
             foreach (var line in t.Log) Say(line);
             return t;
@@ -399,28 +401,116 @@ namespace MateEngine.PmxPipeline
             _ => float.Parse(view, CultureInfo.InvariantCulture),
         };
 
-        private static void Render(Camera cam, int res, string bg, string outPng)
+        // 合成参数：只有走转译材质时才成立——UTS2 兜底材质输出的已经是显示域颜色，
+        // 再套一次视图变换就是双重变换。
+        private sealed class ComposeSettings
+        {
+            public METranspiledMaterials Mats;
+            public MEBloomSettings Bloom;
+        }
+
+        private static ComposeSettings MakeComposeSettings(METranspiledMaterials mats,
+            JObject blenderReport, Dictionary<string, object> report)
+        {
+            if (mats == null || mats.Lut == null || mats.ViewTransformRow < 0) return null;
+
+            var eff = blenderReport?["scene_effect"] as JObject;
+            float? F(string k) => eff?[k] != null ? (float)eff[k] : (float?)null;
+            bool? B(string k) => eff?[k] != null ? (bool)eff[k] : (bool?)null;
+            Color? C(string k) => eff?[k] is JArray a && a.Count >= 3
+                ? new Color((float)a[0], (float)a[1], (float)a[2], 1f) : (Color?)null;
+
+            var bloom = MEPostCompose.FromReport(F, B, C);
+            if (!string.IsNullOrEmpty(GetArg("-noBloom"))) bloom.enabled = false;
+            if (!string.IsNullOrEmpty(GetArg("-measureBloomGain")))
+                MEPostCompose.MeasureGain = true;
+            string gainArg = GetArg("-bloomGain");
+            if (!string.IsNullOrEmpty(gainArg))
+                MEPostCompose.AccumulationGain = float.Parse(gainArg, CultureInfo.InvariantCulture);
+
+            report["compose"] = new Dictionary<string, object>
+            {
+                ["bloom_enabled"] = bloom.enabled,
+                ["bloom_intensity"] = bloom.intensity,
+                ["bloom_threshold"] = bloom.threshold,
+                ["bloom_knee"] = bloom.knee,
+                ["bloom_radius"] = bloom.radius,
+                ["bloom_color"] = new[] { bloom.color.r, bloom.color.g, bloom.color.b },
+                ["accumulation_gain"] = MEPostCompose.AccumulationGain,
+            };
+            Say($"合成参数：bloom={bloom.enabled} 强度={bloom.intensity:F3} " +
+                $"阈值={bloom.threshold:F2} 拐点={bloom.knee:F2} 半径={bloom.radius:F2} " +
+                $"颜色=({bloom.color.r:F3}, {bloom.color.g:F3}, {bloom.color.b:F3})");
+            return new ComposeSettings { Mats = mats, Bloom = bloom };
+        }
+
+        private static void Render(Camera cam, int res, string bg, string outPng,
+                                   ComposeSettings compose)
         {
             bool transparent = bg.Equals("transparent", StringComparison.OrdinalIgnoreCase);
             RenderToPng(cam, res, transparent ? new Color(0, 0, 0, 0) : ParseHexColor(bg),
-                        outPng, msaa: 8);
+                        outPng, msaa: compose != null ? 2 : 8, compose);
         }
 
-        private static void RenderToPng(Camera cam, int res, Color clear, string outPng, int msaa)
+        private static void RenderToPng(Camera cam, int res, Color clear, string outPng,
+                                        int msaa, ComposeSettings compose = null)
         {
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = clear;
             cam.allowHDR = true;
 
             // sRGB 读写：工程是 Linear 色彩空间，渲染在线性域进行、写出时转 sRGB，
-            // 与 Blender 的输出编码一致（Blender 那边额外还有 Filmic，见 Phase 1）。
+            // 与 Blender 的输出编码一致。
             var rt = new RenderTexture(res, res, 24, RenderTextureFormat.ARGB32,
                                        RenderTextureReadWrite.sRGB) { antiAliasing = msaa };
+            // 走合成时先渲进线性 HDR 缓冲：bloom 必须在线性域取亮部并扩散，而视图变换
+            // 是非线性的，顺序反了结果完全不同。
+            //
+            // 超采样倍数 ssaa：Blender 那边 taa_render_samples=64，是对**着色**做 64 次
+            // 抖动采样；Unity 的 MSAA 只对几何边缘多采样，片元着色每像素仍只算一次。
+            // 对程序化纹理（胸衣的 Voronoi 细闪、头发的噪声颗粒）这类高频内容，差别是
+            // 「细密低对比的尘点」与「稀疏高对比的色点」——看起来像算错了，其实是采样
+            // 率不同。渲到 res×ssaa 再逐级二分下采样（双线性正好等于 2×2 盒式平均），
+            // 在**线性域**完成，与 Blender 累加样本的域一致。
+            int ssaa = compose != null ? Mathf.Clamp(GetIntArg("-ssaa", 4), 1, 8) : 1;
+            int big = res * ssaa;
+            RenderTexture hdr = compose == null ? null
+                : new RenderTexture(big, big, 24, RenderTextureFormat.ARGBHalf,
+                                    RenderTextureReadWrite.Linear) { antiAliasing = msaa };
             var prev = RenderTexture.active;
             try
             {
-                cam.targetTexture = rt;
-                cam.Render();
+                if (compose != null)
+                {
+                    Shader.SetGlobalFloat("_MEDeferViewTransform", 1f);
+                    cam.targetTexture = hdr;
+                    cam.Render();
+                    cam.targetTexture = null;
+                    Shader.SetGlobalFloat("_MEDeferViewTransform", 0f);
+
+                    var src = hdr;
+                    var chain = new List<RenderTexture>();
+                    for (int s = big; s > res; s /= 2)
+                    {
+                        var half = RenderTexture.GetTemporary(s / 2, s / 2, 0,
+                            RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear);
+                        half.filterMode = FilterMode.Bilinear;
+                        src.filterMode = FilterMode.Bilinear;
+                        Graphics.Blit(src, half);
+                        chain.Add(half);
+                        src = half;
+                    }
+                    if (ssaa > 1) Say($"超采样 {ssaa}× （{big}² → {res}²，线性域下采样）");
+                    MEPostCompose.Compose(src, rt, compose.Bloom, compose.Mats.Lut,
+                                          compose.Mats.ViewTransformRow, compose.Mats.LutRows,
+                                          compose.Mats.ViewLo, compose.Mats.ViewHi, Say);
+                    foreach (var t in chain) RenderTexture.ReleaseTemporary(t);
+                }
+                else
+                {
+                    cam.targetTexture = rt;
+                    cam.Render();
+                }
                 RenderTexture.active = rt;
                 var tex = new Texture2D(res, res, TextureFormat.RGBA32, false, false);
                 tex.ReadPixels(new Rect(0, 0, res, res), 0, 0);
@@ -436,6 +526,11 @@ namespace MateEngine.PmxPipeline
                 cam.targetTexture = null;
                 rt.Release();
                 UnityEngine.Object.DestroyImmediate(rt);
+                if (hdr != null)
+                {
+                    hdr.Release();
+                    UnityEngine.Object.DestroyImmediate(hdr);
+                }
             }
         }
 

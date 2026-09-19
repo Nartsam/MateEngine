@@ -274,12 +274,20 @@ def inspect(mesh, arm, preset_path, lib_mat_names, expect_graph):
     rep["drivers"] = read_drivers(mesh)
 
     sc = bpy.context.scene
+    # bloom 的全部参数都要进报告：插件只写了 use_bloom / intensity / color 三项，
+    # 其余留在 EEVEE 默认值上，而 Unity 侧要复刻就得知道确切数值，不能靠"应该是默认吧"。
     rep["scene_effect"] = {
         "use_bloom": sc.eevee.use_bloom,
         "bloom_intensity": round(sc.eevee.bloom_intensity, 6),
         "bloom_color": [round(c, 6) for c in sc.eevee.bloom_color],
+        "bloom_threshold": round(sc.eevee.bloom_threshold, 6),
+        "bloom_knee": round(sc.eevee.bloom_knee, 6),
+        "bloom_radius": round(sc.eevee.bloom_radius, 6),
+        "bloom_clamp": round(sc.eevee.bloom_clamp, 6),
         "view_transform": sc.view_settings.view_transform,
         "look": sc.view_settings.look,
+        "exposure": round(sc.view_settings.exposure, 6),
+        "gamma": round(sc.view_settings.gamma, 6),
     }
     say("场景效果：bloom=%s(%.3f) view_transform=%s look=%s" % (
         sc.eevee.use_bloom, sc.eevee.bloom_intensity,

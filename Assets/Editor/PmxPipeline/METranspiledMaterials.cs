@@ -22,6 +22,13 @@ namespace MateEngine.PmxPipeline
         public readonly Dictionary<string, Material> ByName = new();
         public readonly List<string> Log = new();
 
+        /// <summary>合成 pass 也要查视图变换表，这里把行号与参数一起交出去。</summary>
+        public Texture2D Lut => _lut;
+        public int LutRows { get; private set; }
+        public int ViewTransformRow { get; private set; } = -1;
+        public float ViewLo { get; private set; }
+        public float ViewHi { get; private set; }
+
         private readonly JObject _data;
         private readonly string _imagesDir;
         private readonly Dictionary<string, Texture2D> _texCache = new();
@@ -88,6 +95,13 @@ namespace MateEngine.PmxPipeline
             _lut.SetPixels(px);
             _lut.Apply(updateMipmaps: false, makeNoLongerReadable: false);
             _owned.Add(_lut);
+
+            LutRows = h;
+            for (int i = 0; i < h; i++)
+                if ((string)rows[i]["kind"] == "view") { ViewTransformRow = i; break; }
+            var vt = _data["viewTransform"] as JObject;
+            ViewLo = vt != null ? (float)vt["lo"] : -12.473931188f;
+            ViewHi = vt != null ? (float)vt["hi"] : 4.026068812f;
             Say($"LUT 贴图 {w}×{h}：" + string.Join(", ", rows.Select(r => (string)r["name"])));
         }
 
@@ -166,6 +180,63 @@ namespace MateEngine.PmxPipeline
             Say($"方向 uniform：SUN=({sunUnity.x:F4}, {sunUnity.y:F4}, {sunUnity.z:F4}) " +
                 $"FRONT=({frontUnity.x:F4}, {frontUnity.y:F4}, {frontUnity.z:F4}) " +
                 $"RIGHT=({rightUnity.x:F4}, {rightUnity.y:F4}, {rightUnity.z:F4})");
+        }
+
+        /// <summary>
+        /// 写 Generated（ORCO）坐标所需的包围盒。Blender 的 Generated 是物体包围盒
+        /// 归一化坐标，程序化纹理（Noise / Voronoi）全靠它定位。
+        ///
+        /// 包围盒必须换算到 **Blender 物体空间**：Unity 的局部坐标已经过
+        /// U = (-Bx, Bz, -By)，直接拿 Unity 的 bounds 会把轴对错，花纹方向就全变。
+        /// </summary>
+        public void SetGeneratedBounds(GameObject root)
+        {
+            Bounds? local = null;
+            foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (smr.sharedMesh == null) continue;
+                var b = smr.sharedMesh.bounds;
+                local = local.HasValue ? Encapsulate(local.Value, b) : b;
+            }
+            foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                var b = mf.sharedMesh.bounds;
+                local = local.HasValue ? Encapsulate(local.Value, b) : b;
+            }
+            if (!local.HasValue)
+            {
+                Say("!! 没找到网格，Generated 坐标退化为单位立方体");
+                local = new Bounds(Vector3.zero, Vector3.one);
+            }
+
+            // U = (-Bx, Bz, -By) 的逆：B = (-Ux, -Uz, Uy)。它是带符号的轴置换，
+            // 逐角点映射后取 min/max 即可。
+            var lo = local.Value.min;
+            var hi = local.Value.max;
+            var a = new Vector3(-hi.x, -hi.z, lo.y);
+            var c = new Vector3(-lo.x, -lo.z, hi.y);
+            var bmin = Vector3.Min(a, c);
+            var bmax = Vector3.Max(a, c);
+            var size = bmax - bmin;
+            var inv = new Vector3(
+                Mathf.Abs(size.x) > 1e-9f ? 1f / size.x : 0f,
+                Mathf.Abs(size.y) > 1e-9f ? 1f / size.y : 0f,
+                Mathf.Abs(size.z) > 1e-9f ? 1f / size.z : 0f);
+
+            foreach (var mat in ByName.Values)
+            {
+                mat.SetVector("_MEGenMin", bmin);
+                mat.SetVector("_MEGenInvSize", inv);
+            }
+            Say($"Generated 包围盒（Blender 物体空间）min=({bmin.x:F4}, {bmin.y:F4}, {bmin.z:F4}) " +
+                $"size=({size.x:F4}, {size.y:F4}, {size.z:F4})");
+        }
+
+        private static Bounds Encapsulate(Bounds a, Bounds b)
+        {
+            a.Encapsulate(b);
+            return a;
         }
 
         /// <summary>
