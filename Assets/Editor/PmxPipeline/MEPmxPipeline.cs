@@ -62,12 +62,43 @@ namespace MateEngine.PmxPipeline
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
         }
 
+        // 独立导出入口只接受显式输入，避免本机历史 settings 把角色名或输出路径带入新任务。
+        public static void BuildTranspiledAndExport()
+        {
+            bool ok = false;
+            try
+            {
+                string Required(string key) => GetArg(key) ?? throw new ArgumentException($"缺少参数 {key}");
+                var options = new PmxPipelineOptions
+                {
+                    PmxPath = PmxPipelineOptions.NormalizeFilePath(Required("-pmx")),
+                    ModelName = Required("-modelName"),
+                    OutputRoot = PmxPipelineOptions.ToProjectRelativeAssetPath(Required("-outputRoot")),
+                    OutPath = PmxPipelineOptions.NormalizeFilePath(Required("-out")),
+                    TranspiledBindingsPath = PmxPipelineOptions.NormalizeFilePath(Required("-bindings")),
+                    OutlinePath = PmxPipelineOptions.NormalizeFilePath(Required("-outline")),
+                    Style = new PmxStyleConfig { materialProfile = "transpiled" },
+                };
+                string project = Path.GetFullPath(PmxPipelineOptions.ProjectRoot) + Path.DirectorySeparatorChar;
+                if (!options.OutPath.StartsWith(project, StringComparison.OrdinalIgnoreCase) ||
+                    !options.OutPath.EndsWith(".me", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("输出必须是仓库内的 .me 文件");
+                if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
+                    throw new InvalidOperationException("需要 Windows x64 构建目标，请启动 Unity 时传 -buildTarget Win64");
+                var model = new PmxReader().ReadFile(options.RequirePmxPath());
+                var result = PmxMeshBuilder.Build(model, options.PmxPath, options, null);
+                ok = ExportInternal(options, result.PrefabPath, out _, saveSettings: false);
+            }
+            catch (Exception ex) { Debug.LogError($"[MEPmxPipeline] Transpiled export failed: {ex}"); }
+            if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+        }
+
         // ===== Primary `.me` export =====
-        // 用途：把构建好的 prefab 连同贴图/材质/着色器打包成单文件 `.me`(ZIP 内含 AssetBundle)，
+        // 用途：把构建好的 prefab 连同贴图/材质/着色器打包成单文件 `.me`（原始 AssetBundle），
         // 走 App 现有 `.me` 加载链直接显示；自带渲染，不依赖 App 侧风格系统。
         //
         // 架构结论：VRM+RenderStyle 路径已归档（见 ADR-0009），当前 PMX 生产路径是
-        // Editor 离线导入 -> UTS2/lilToon + DynamicBone -> `.me`。不要把这里当作旧兼容分支删除。
+        // Editor 离线导入 -> 转译材质（UTS2 兜底）+ DynamicBone -> `.me`。
         //
         // 实现时踩过的坑 + 解决：
         //  1) AssetBundle 不能含 C# 脚本——脚本对玩家程序集解析；ExportInternal 里依赖收集已排除 .cs。
@@ -206,7 +237,8 @@ namespace MateEngine.PmxPipeline
             return "\"" + value.Replace("\"", "\\\"") + "\"";
         }
 
-        private static bool ExportInternal(PmxPipelineOptions options, string prefabPath, out string exportedPath)
+        private static bool ExportInternal(PmxPipelineOptions options, string prefabPath, out string exportedPath,
+                                           bool saveSettings = true)
         {
             exportedPath = null;
             try
@@ -231,17 +263,20 @@ namespace MateEngine.PmxPipeline
                 Directory.CreateDirectory(tempDir);
 
                 var build = new AssetBundleBuild { assetBundleName = name, assetNames = deps };
-                BuildPipeline.BuildAssetBundles(tempDir, new[] { build },
+                var manifest = BuildPipeline.BuildAssetBundles(tempDir, new[] { build },
                     BuildAssetBundleOptions.ChunkBasedCompression, EditorUserBuildSettings.activeBuildTarget);
+                if (manifest == null) throw new InvalidOperationException("AssetBundle 构建失败，详见 Unity 日志");
 
                 string built = Path.Combine(tempDir, name);
+                if (prefab.GetComponent<MEModelDirections>() != null)
+                    MEModelExportValidation.Validate(built, prefab);
                 string outPath = options.ResolveDefaultOutPath(prefabPath);
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath));
                 File.Copy(built, outPath, true);
                 Directory.Delete(tempDir, true);
 
                 exportedPath = outPath;
-                options.SaveLastBuild(prefabPath, outPath);
+                if (saveSettings) options.SaveLastBuild(prefabPath, outPath);
                 Debug.Log($"[MEPmxPipeline] Exported .me -> {outPath}  (deps={deps.Length})");
                 return true;
             }

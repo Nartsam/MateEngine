@@ -18,6 +18,7 @@
 | ADR-0010 | 2026-06-21 | 运行时可切换渲染风格；全屏后处理与透明窗口不兼容 | Accepted |
 | ADR-0011 | 2026-09-10 | 复刻 Blender 渲染预设改走节点图转译，放弃参数拟合 | Accepted |
 | ADR-0012 | 2026-09-22 | 渲染复刻管线是离线工具；bloom 需要改 App 渲染管线 | Accepted |
+| ADR-0013 | 2026-09-22 | 独立命令行模型导出工具，先交付无 bloom 的 `.me` | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -373,7 +374,7 @@ ADR-0009 回退了"通用 VRM + 可切换 RenderStyle"弯路，但弯路中"**�
 
 剥离复用弯路里健全的"可切换风格"架构（去掉 VRM 转换与 HoyoToon），落地为运行时叠加体系，**不需要重生成 `.me`**。新增 `RenderStyleManager`（场景持久单例，`RuntimeInitializeOnLoadMethod` 自举，无需改场景即存在），内置风格表 `默认/鲜艳/柔和`，`SetStyle(code)` 实时切换、随 `SettingsData.renderStyle` 持久化。
 
-> ⚠️ **首版（全局后处理）已被透明窗口证伪——见下方"修正"。** 现行方案为**纯逐材质**。
+> **当前状态：全屏调色暂停（`GradeEnabled = false`），下拉与持久化保留。** 下文依次记录全局后处理、逐材质覆盖和自定义 image effect 的历史尝试，暂停原因见「三次反馈」。新转译路线为 bloom 改造相机的决策见 ADR-0012。
 
 设置 UI：`Settings/RenderStyleDropdownHandler.cs`（沿用 `LanguageDropdownHandler` 模式，绑 `SettingsData.renderStyle`，onValueChanged → `RenderStyleManager.SetStyle`）。场景内下拉由编辑器命令 `RenderStyleSceneSetup`（菜单 `MateEngine ▸ Render Style ▸ …`，亦可 `-executeMethod`）**克隆现有 Graphics（画质）下拉**生成——让 Unity 正确处理 fileID/序列化，幂等且可经 git 回退。标题文本设为静态 `渲染风格`（禁用其 `LocalizeStringEvent`，因为所有设置标题走本地化 key 而非字面量）。
 
@@ -565,8 +566,8 @@ App 实测：① 切风格模型有明显变化，但**设置菜单颜色也跟�
 
 ### 背景
 
-ADR-0011 决定走节点图转译。转译器、描边烘焙与差分闭环落地后，九个角色的轮廓 IoU 稳定在
-0.998 以上、平均 ΔE76 在 1.1–3.0（对照 UTS2 基线 0.9677 / 11.00），用户已肉眼验收通过。
+ADR-0011 决定走节点图转译。转译器、描边烘焙与差分闭环落地后，九个角色正背视角的轮廓 IoU
+按四位小数为 0.9980–0.9991、交集内平均 ΔE76 为 1.08–5.51（对照 UTS2 基线 0.9677 / 11.00），用户已肉眼验收通过。
 接下来要回答两个集成问题：这套预处理放哪里，以及效果能不能整体烘进离线文件。
 
 ### 决策一：预处理是仓库内的离线工具，不内置进 App
@@ -593,6 +594,9 @@ App 只负责加载转换结果。
 不能不要。
 
 ### 决策三：走 A 路线——改造 App 渲染管线，不为了不改管线而降低效果
+
+本路线仍是完整渲染集成目标；2026-09-22 用户将本次工具交付范围限定为无 bloom 导出，
+相机改造延后，见 ADR-0013。
 
 需要三处改动：
 
@@ -627,3 +631,25 @@ Blender 里看到的那张图。等能在 App 里实际看到再定。
 - `Tools/PmxPipeline/README.md`：管线的操作参考
 - `Docs/plans/2026-09-10-blender-graph-transpile.md`：Phase 4 一节列有待办
 - `Assets/PmxTranspileRuntime/MEPostCompose.{cs,shader}`：alpha 感知合成
+
+## ADR-0013: 独立命令行模型导出工具，先交付无 bloom 的 `.me`
+
+状态：Accepted　日期：2026-09-22
+
+用户要求把最近的模型预处理流程收成仓库内小工具：指定 `.pmx`、配套 `.blend` 和输出路径，
+生成可直接从 MateEngine 角色库导入的模型；明确选择命令行入口，并将 bloom 留到后续。
+
+- `export_model.ps1` 串起现有导图、描边、转译和 Unity 构建流程。工具定位与串行进程执行
+  提取到 `PmxTools.ps1`，与差分入口共用。中间产物按输入路径组合隔离，全部在仓库内。
+- 转译 Material、Texture2D 与浮点 LUT 保存为真实资产，描边合并进已有网格资产，沿用
+  原始 BlendShape、Humanoid 与 DynamicBone。新增显式参数 batch 入口，避免本机历史
+  角色名、风格或导出路径影响结果，也不改写本机配置。
+- SUN/FRONT/RIGHT 在应用预设后从求值网格提取。FRONT/RIGHT 以头骨局部方向序列化，
+  `MEModelDirections` 在动画与鼠标跟踪之后写入每个实例的 PropertyBlock；SUN 保持世界方向。
+- 模型 `.me` 使用 `VRMLoader` 已支持的原始 AssetBundle 格式，与 Mods 扫描链的 ZIP `.me`
+  区分。Bundle 不携带 C#，因此 App 必须先重新构建以包含方向组件。
+- 每次导出重新加载实际 bundle，验证网格/形态键、贴图色彩空间、材质及着色器出图，
+  并核验转头方向与共享材质隔离。实际用到的未转译材质直接报错。
+
+本期不改相机、UI 或 `MEPostCompose`。Filmic 仍在材质末端执行，没有 bloom，半透明在
+显示域混合的差异仍存在。完整的线性合成、bloom 与辉光 alpha 取舍继续按 ADR-0012 后续处理。

@@ -52,6 +52,8 @@ namespace MateEngine.PmxPipeline
         public string StylePath;
         // Loaded per-model style overrides (null when none found). Set by ResolveAndLoadStyle.
         public PmxStyleConfig Style;
+        public string TranspiledBindingsPath;
+        public string OutlinePath;
 
         public bool HasPreset => !string.IsNullOrWhiteSpace(PresetPath);
 

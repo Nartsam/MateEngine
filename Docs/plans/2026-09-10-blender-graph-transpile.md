@@ -560,8 +560,8 @@ EEVEE 的 `bloom_intensity` **不是**「辉光能量占比」——多级金字
 
 #### 尚未接进主管线
 
-目前外壳是在 `MERefRenderer` 渲染时并进网格的（`-outline <清单>`），prefab 本身不带。
-Phase 4 要把它挪进 `PmxMeshBuilder`，`.me` 才会带描边。
+Phase 3 初期外壳只在 `MERefRenderer` 渲染时并入。2026-09-22 的独立导出工具已将这一步
+接入 `PmxMeshBuilder`，描边写回网格资产并进入 `.me`；见 Phase 4 与 ADR-0013。
 
 ### 多视角验收（2026-09-19）
 
@@ -792,16 +792,20 @@ Perlin 3D/4D 与 EEVEE 吻合到 1e-6（24 个采样点），RGB Curves 的顺�
 
 #### 待办
 
-- [ ] 描边外壳挪进 `PmxMeshBuilder`，prefab / `.me` 自带（现在只在 `MERefRenderer`
-      渲染时并进去）
-- [ ] 转译材质落成**真正的资产**（Material / Texture2D / LUT 贴图），否则 prefab 与
-      AssetBundle 序列化不进去。现在它们是运行时 `new` 出来的
-- [ ] 接进 `materialProfile = "transpiled"`，走 `ExportMe` 出 `.me`
+- [x] 描边外壳接进 `PmxMeshBuilder`，写回网格资产，prefab / `.me` 自带
+- [x] 转译材质保存为 Material / Texture2D / 浮点 LUT 资产
+- [x] 接进 `materialProfile = "transpiled"`，独立命令行经 `BuildTranspiledAndExport` 导出 `.me`
+- [x] 烘焙时提取方向属性，运行时按头骨更新脸部 SDF；PropertyBlock 隔离模型实例
 - [ ] 按 A 路线改造相机与合成 pass
-- [ ] AssetBundle 变体不剥离（自生成的着色器变体确定，风险低于 lilToon）
+- [x] 导出后重载实际 AssetBundle，核验 shader 出图、贴图色彩空间与网格/形态键
 - [ ] App 内实测：透明窗口、动画、移动窗口下渲染稳定
 - [ ] 定辉光 alpha 外扩方案
-- [ ] 写 ADR，更新 `ARCHITECTURE.md` / `PROGRESS.md`
+- [x] 离线工具交付边界写入 ADR-0013，同步架构与操作文档
+
+2026-09-22 用户明确分期：先交付无 bloom 的命令行导出工具，相机合成与 UI 隔离留到后续。
+丽塔、寻梦者导出后重载均通过；256² 的资产图与 bundle 图 RGBA 平均误差均为 0/255，
+头骨引用、转头方向更新、共享材质隔离通过。这是**序列化往返验收**，不替代前述 Blender
+渲染差分，也不代表 A 路线的完整 App 验收。命令与产物位置见 `Tools/PmxPipeline/README.md`。
 
 ## 风险与回退
 

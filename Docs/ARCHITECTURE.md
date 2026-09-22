@@ -85,6 +85,7 @@
 |---|---|
 | `Assets/Editor/BuildScript.cs` | 先重建 Addressables content，再显式指定主场景构建 Windows x64 |
 | `Assets/Editor/PmxPipeline/MEPmxPipeline.cs` | PMX 离线管线 batch/menu 入口；`BuildModel`、`BuildAndExport`、`ExportMe` 通过 CLI 或本机配置取路径 |
+| `Assets/Editor/PmxPipeline/MEModelExportValidation.cs` | 独立导出的 AssetBundle 重载验收：资产格式、网格/形态键、shader 出图与头部方向绑定 |
 | `Assets/Editor/PmxPipeline/PmxPipelineOptions.cs` | PMX 管线路径和参数聚合；优先 CLI，其次 ignored 本机配置 `Library/MateEngineUserData/PmxPipeline/settings.json`，最后项目相对默认输出 |
 | `Assets/Editor/PmxPipeline/PmxMeshBuilder.cs` | PMX 网格、骨架、BlendShape、Humanoid、材质、物理与 prefab 构建 |
 | `Assets/Editor/PmxPipeline/PmxPhysics.cs` | PMX 动态刚体/关节转换为 DynamicBone 链，并按 Humanoid 腿部/髋部骨生成 Skirt 专用 DynamicBoneCollider |
@@ -92,10 +93,11 @@
 | `Assets/Editor/PmxPipeline/PmxMaterialMapper.cs` | PMX 材质与 Blender preset 参数到 UTS2 材质的映射；贴图材质保留 PMX 贴图原色，只接受有效 preset 颜色，并使用保守的软 toon 阴影、rim 与轮廓参数；matcap/highColor 默认关闭；消费 `PmxStyleConfig` 的逐模型风格覆盖。**注：2026-06-22 试过在此恢复高光/硬卡通追 HoYo，失败已回退，勿重试，见 ADR-0010 失败路线** |
 | `Assets/Editor/PmxPipeline/PmxStyleConfig.cs` | 逐模型风格配置（JSON）DTO 与加载器；把材质风格调参从 C# 解耦到数据。Shader 无关旋钮：`materialProfile`、`skinWarmth`、`brightness`、`outlineScale`、`rimStrength`，及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖 |
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 差分验收的对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成，出对照图与材质 ID 通道 |
-| `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读转译器的 `bindings.json`，建 LUT 贴图与各贴图，按材质名替换槽位 |
+| `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读转译器的 `bindings.json`，建 LUT 与贴图、按材质名替换槽位；独立导出时严格检查并保存真实 Material/Texture2D 资产 |
 | `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把 Blender 烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
-| `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。**不是 Built-in 后处理栈**，是显式保留 alpha 的自写 pass，不破坏分层透明窗口（见 ADR-0010、ADR-0012） |
-| `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleManager.cs` | 运行时可切换渲染风格单例（自举，无需改场景）。内置 `默认/鲜艳/柔和`；`SetStyle` 驱动相机 `RenderStyleImageEffect` 做**保留 alpha 的全屏饱和/对比/亮度**分级（路线 A），随 `SettingsData.renderStyle` 持久化。**不用 Built-in 全屏后处理**——它会破坏分层透明窗口的 alpha（见 ADR-0010）|
+| `Assets/PmxTranspileRuntime/MEModelDirections.cs` | prefab 自带的方向组件，LateUpdate 在鼠标跟踪之后更新头部 FRONT/RIGHT；SUN 保持世界方向，通过 PropertyBlock 隔离实例 |
+| `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。自写 pass 显式保留 alpha，已用于离线差分闭环；App 相机接入、UI 隔离与分层透明窗口运行验收仍待 Phase 4（见 ADR-0012） |
+| `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleManager.cs` | 运行时渲染风格单例（自举，无需改场景），保留 `默认/鲜艳/柔和` 选项与 `SettingsData.renderStyle` 持久化。**当前 `GradeEnabled = false`，全屏调色暂停**：主相机同时渲染模型和菜单，启用会使菜单一起变色。`RenderStyleImageEffect` 保留但不执行调色；新转译路线的相机集成见 ADR-0012 |
 | `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleImageEffect.cs` | 相机 `OnRenderImage` 跑 `Hidden/RenderStyleGrade`；inactive 时纯 passthrough（`默认`=无效果）|
 | `Assets/MATE ENGINE - Shaders/Resources/RenderStyleGrade.shader` | 全屏调色 shader，保留源 alpha 且不动全透明像素 → 透明窗口安全。放 Resources 供运行时 `Resources.Load` |
 | `Assets/Editor/PmxBlendshapeDump.cs` | 编辑器工具：load `.me` bundle dump 所有 morph 名到 `Build/blendshape_names.txt`（供 Blendshape 本地化字典取真实名）|
@@ -159,7 +161,10 @@ Build 产物优先使用 `{exeDir}/UserData/`。Editor 和命令行构建进程�
 
 ## Mod 系统
 
-`.me` 文件本质是 ZIP，内含 AssetBundle、元数据和 `scene_links.json`。它可以包含自定义 Shader、AnimatorController、AnimationClip、音频、粒子等资源。
+`.me` 有两条加载链：模型导入由 `VRMLoader` 直接读取原始 AssetBundle（PMX 工具输出此格式）；
+`MEModHandler` 的 Mods 扫描链读取 ZIP 容器，内含 AssetBundle、元数据和 `scene_links.json`。
+两种格式共用扩展名，导出的 PMX 模型应从角色库导入。Bundle 可以包含自定义 Shader、
+AnimatorController、AnimationClip、音频、粒子等资源。
 
 约束：
 
@@ -193,11 +198,18 @@ Editor-only 的预处理流程：把 PMX 模型、MMD 物理和配套 `.blend` �
 `bindings.json`）→ Unity 侧装配到 PMX 网格上。验收靠 Blender 无头渲染与 Unity 渲染的
 逐像素差分（轮廓 IoU + 交集内 ΔE76 + 逐材质分解），不靠肉眼判断。
 
-### 材质：UTS2 兜底（保留，非生产路径）
+独立导出入口是 `Tools/PmxPipeline/export_model.ps1`，显式指定 PMX、Blend 和仓库内 `.me`
+输出。它调用 `BuildTranspiledAndExport`，不读取旧角色/风格配置；`PmxMeshBuilder` 的
+`materialProfile="transpiled"` 分支将描边写回网格、保存转译资产，并挂载 `MEModelDirections`。
+方向属性在烘描边时从 Blender 求值网格提取，无需参考渲染。App 需先构建一次以包含新组件。
+本期仅交付无 bloom 模型，视图变换在材质内完成；相机合成和 UI 隔离仍待后续（ADR-0013）。
+
+### 材质：UTS2 兜底（旧建模入口保留）
 
 `PmxMaterialMapper` + `PmxStyleConfig` + `Tools/PmxPipeline/styles/<模型名>.style.json`。
-`materialProfile = "uts2"` 时启用。它做不到高保真复刻（根因见 ADR-0010/0011），保留是为了
-不破坏已经烤出去的旧 `.me`，以及在转译路线出问题时有个能出图的退路。
+旧 `BuildModel`/`BuildAndExport` 入口继续使用这套映射。独立导出入口先复用其材质槽与队列，
+再按 `materialProfile="transpiled"` 替换为转译资产。UTS2 做不到高保真复刻（根因见
+ADR-0010/0011），保留为旧 `.me` 兼容与出图兜底。
 
 风格旋钮均为 shader 无关概念：`skinWarmth`/`brightness`/`outlineScale`/`rimStrength`，
 以及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖。两种不重编译的迭代循环：改
@@ -222,6 +234,8 @@ Editor-only 的预处理流程：把 PMX 模型、MMD 物理和配套 `.blend` �
 
 | 入口 | 作用 |
 |---|---|
+| `Tools/PmxPipeline/export_model.ps1` | PMX + Blend 独立导出 `.me`；操作与产物路径见工具 README |
+| `MateEngine.PmxPipeline.MEPmxPipeline.BuildTranspiledAndExport` | 显式参数的转译资产构建、bundle 重载验证与导出 |
 | `Tools/PmxPipeline/run_ref_diff.ps1` | 渲染复刻的完整闭环：导出节点图 → 烘描边 → 转译 → 双端渲染 → 差分 |
 | `MateEngine.PmxPipeline.MEPmxPipeline.BuildModel` | 由 PMX 构建 prefab |
 | `MateEngine.PmxPipeline.MEPmxPipeline.BuildAndExport` | 构建并打包 `.me` |

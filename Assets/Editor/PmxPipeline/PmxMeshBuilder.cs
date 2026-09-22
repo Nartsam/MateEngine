@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -138,6 +139,9 @@ namespace MateEngine.PmxPipeline
 
             AddRenderProfile(root, renderPreset);
 
+            if (options.Style?.materialProfile == "transpiled")
+                ApplyTranspiled(root, smr, mesh, animator, options, outFolder);
+
             // --- persist prefab ---------------------------------------------------
             string prefabPath = $"{outFolder}/{modelName}.prefab";
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
@@ -160,6 +164,60 @@ namespace MateEngine.PmxPipeline
         }
 
         // ----------------------------------------------------------------------
+
+        private static void ApplyTranspiled(GameObject root, SkinnedMeshRenderer smr, Mesh mesh,
+                                            Animator animator, PmxPipelineOptions options, string folder)
+        {
+            if (!animator.isHuman)
+                throw new InvalidOperationException("转译模型必须具有有效的 Humanoid Avatar");
+            var head = animator.GetBoneTransform(HumanBodyBones.Head);
+            if (head == null) throw new InvalidOperationException("找不到 Humanoid 头骨");
+
+            var metadata = JObject.Parse(File.ReadAllText(options.OutlinePath));
+            if ((int)metadata["baseVertexCount"] != mesh.vertexCount)
+                throw new InvalidOperationException("描边与 PMX 基础顶点数不一致，请重新烘焙");
+            Vector3 Direction(string key)
+            {
+                var driver = metadata["drivers"]?[key];
+                if (driver == null || (bool?)driver["constant"] != true ||
+                    driver["value"] is not JArray v || v.Count != 3)
+                    throw new InvalidOperationException($"描边清单缺少恒定方向 {key}，请重新烘焙");
+                var value = MERefRenderer.BlenderToUnity(new Vector3((float)v[0], (float)v[1], (float)v[2]));
+                if (value.sqrMagnitude < 1e-8f)
+                    throw new InvalidOperationException($"预设方向 {key} 为零");
+                return value.normalized;
+            }
+            var sun = Direction("SUN");
+            var back = Direction("FRONT");
+            var right = Direction("RIGHT");
+
+            foreach (var line in MEOutlineShell.Apply(root, options.OutlinePath)) Debug.Log(line);
+            // 保留原网格资产与 GUID，只把合并结果写回；prefab 的 Body 路径和形态键不变。
+            var merged = smr.sharedMesh;
+            EditorUtility.CopySerialized(merged, mesh);
+            smr.sharedMesh = mesh;
+            smr.localBounds = mesh.bounds;
+            UnityEngine.Object.DestroyImmediate(merged);
+            EditorUtility.SetDirty(mesh);
+
+            var placeholders = smr.sharedMaterials.Where(m => m != null && !AssetDatabase.Contains(m)).ToArray();
+            var materials = METranspiledMaterials.Load(options.TranspiledBindingsPath, strict: true);
+            try
+            {
+                materials.SetDirections(sun, back, right);
+                materials.SetGeneratedBounds(root);
+                materials.Apply(root);
+                materials.SaveAssets(folder + "/Transpiled");
+                foreach (var line in materials.Log) Debug.Log(line);
+                var directions = root.AddComponent<MEModelDirections>();
+                directions.Configure(head, root.GetComponentsInChildren<Renderer>(true), sun, back, right);
+            }
+            finally
+            {
+                materials.Dispose();
+                foreach (var placeholder in placeholders) UnityEngine.Object.DestroyImmediate(placeholder);
+            }
+        }
 
         // Verts whose primary weight is a non-deforming bone (操作中心 / IK) = deletion garbage.
         private static bool[] FindOrphanVerts(PmxModel model)

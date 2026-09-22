@@ -25,6 +25,7 @@
         --pmx <角色>.pmx --preset 渲染预设.blend --out Build/RenderPreset/outline/丽塔
 """
 import json
+import math
 import os
 import struct
 import sys
@@ -90,6 +91,8 @@ def main():
     pmx = os.path.abspath(args["pmx"])
     preset = os.path.abspath(args["preset"])
     out = os.path.abspath(args["out"])
+    if os.path.commonpath([out, bap.REPO_ROOT]) != bap.REPO_ROOT:
+        raise SystemExit("描边产物必须留在仓库内：" + out)
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
 
     say("Blender %s" % bpy.app.version_string)
@@ -101,6 +104,19 @@ def main():
     # set_scene_effect 传 False：这里只要几何，场景设置与渲染无关
     plugin.load_presets(preset, bap.FACE_LOCATOR_NAME, bap.HEAD_BONE_NAME,
                         bap.MATCH_MODE_STRIP_SUFFIX, False)
+    bpy.context.view_layer.update()
+    # 与参考渲染读同一份求值属性，不需要渲染报告，也不猜预设的方向默认值。
+    drivers = bap.read_drivers(mesh)
+    for key in bap.DRIVER_ATTRS:
+        driver = drivers.get(key)
+        if (not driver or not driver["constant"] or
+                not all(math.isfinite(v) for v in driver["value"]) or
+                sum(v * v for v in driver["value"]) < 1e-8):
+            raise SystemExit("预设缺少有效的恒定方向属性：" + key)
+    locator = bpy.data.objects.get(bap.FACE_LOCATOR_NAME)
+    if (locator is None or locator.parent != arm or locator.parent_type != "BONE" or
+            locator.parent_bone != bap.HEAD_BONE_NAME):
+        raise SystemExit("面部定位未绑定到頭骨，无法导出随头部运动的 SDF 方向")
 
     nodes_mod = next((m for m in mesh.modifiers if m.type == "NODES"), None)
     if nodes_mod is None:
@@ -216,6 +232,8 @@ def main():
 
     meta = {
         "formatVersion": 1,
+        "drivers": drivers,
+        "headBone": bap.HEAD_BONE_NAME,
         "pmx": pmx,
         "preset": preset,
         "baseVertexCount": base_n,

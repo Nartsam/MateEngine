@@ -92,6 +92,6 @@ Assets/PmxImported.meta
 __pycache__/
 
 # 节点图转译生成的着色器与材质清单（Tools/PmxPipeline/transpile.py 一条命令可重建，
-# 没有任何东西按 GUID 引用它们，材质在运行时按着色器名装配）
+# 独立导出时 PmxImported 材质会引用这些 shader；两者均为可重建的本地产物）
 Assets/Generated/
 Assets/Generated.meta

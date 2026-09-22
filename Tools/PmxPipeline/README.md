@@ -37,6 +37,44 @@
                                         [ExportMe]      ─> .me
 ```
 
+## 导出可导入 App 的模型
+
+关闭本项目的 Unity 编辑器，在仓库根执行：
+
+```powershell
+pwsh -NoProfile -File Tools/PmxPipeline/export_model.ps1 `
+    -Pmx "D:/模型/角色.pmx" `
+    -Preset "D:/模型/渲染预设.blend" `
+    -Out "Build/PmxModels/角色.me"
+```
+
+三个参数分别指定角色本体、配套渲染预设和输出文件；输入不要求放在约定的模型库结构中。
+相对路径按仓库根解析，输出必须留在仓库内。Blender/Unity 沿用下方的本机路径解析规则，
+也可传 `-BlenderExe`、`-UnityExe`；版本在启动前检查为 Blender 3.6 与本项目精确 Unity 版本。
+Python 使用仓库内 `Build/.venv`。
+
+工具每次依次执行：导出完整节点图和贴图 → 烘焙描边并提取方向属性 → 转译 HLSL →
+生成 Humanoid prefab、保存材质/贴图/LUT/描边网格 → 打包并重新加载 AssetBundle 验证 →
+写出 `.me`。实际使用的材质缺转译或贴图时导出失败；预设库中未使用的遗留材质可以跳过。
+新入口不读取旧配置里的角色名、导出路径或风格覆盖，也不改写本机配置。
+
+输出为 App 已支持的**原始 AssetBundle 格式 `.me`**。在角色库的模型导入入口选择该文件。
+包含原始日文 BlendShape、现有 DynamicBone 物理近似、转译材质和描边。
+**本工具不接入 bloom**，Filmic 视图变换在材质内执行；半透明混合与线性合成仍有已知差异。
+
+导出模型带 `MEModelDirections` 组件，跟随头骨更新脸部 SDF 朝向，日光保持预设的世界方向。
+**App 需要使用包含此组件的新版构建**；AssetBundle 不携带 C# 实现，旧 exe 无法执行它。
+
+中间产物按 PMX/预设路径组合隔离，键为路径哈希：
+
+| 路径 | 内容 |
+|---|---|
+| `Build/PmxExport/<键>/` | 图、原始贴图、描边、逐步日志及 bundle 验证预览 `export-preview.png` |
+| `Assets/Generated/PmxTranspiled/Export_<键>/` | 生成的着色器与绑定清单 |
+| `Assets/PmxImported/Export_<键>/<PMX文件名>/` | 可重新打包的 prefab、网格、Avatar、材质与贴图资产 |
+
+以上均为忽略的本地产物。最终 `.me` 已包含加载所需的资产，不依赖外部 PMX/Blend 路径。
+
 ## 跑一次完整闭环
 
 ```powershell
@@ -117,6 +155,8 @@ Build/.venv/Scripts/python.exe -m pip install numpy pillow
 
 | 文件 | 职责 |
 |---|---|
+| `export_model.ps1` | 独立导出入口：显式 PMX + Blend → `.me`，无参考渲染与 bloom 集成 |
+| `PmxTools.ps1` | 导出与差分入口共用的本机工具定位、串行进程执行和日志摘要 |
 | `run_ref_diff.ps1` | 闭环入口。串起导出/烘焙/转译/双端渲染/差分，并解析本机外部路径 |
 | `export_blender_graph.py` | 从 `.blend` 导出**完整节点图**（含连线、插槽默认值、节点组接口、色带与曲线的 257 项烤表）与预设内打包的贴图 |
 | `graph_ir.py` | 节点图中间表示：展开节点组、解析 Reroute、按 `data_type` 判定活动插槽、插入隐式类型转换 |
@@ -136,6 +176,8 @@ Build/.venv/Scripts/python.exe -m pip install numpy pillow
 
 | 文件 | 职责 |
 |---|---|
+| `Assets/Editor/PmxPipeline/MEModelExportValidation.cs` | 重新加载实际 bundle，检查网格/形态键、材质、贴图色彩空间、出图与头部方向更新 |
+| `Assets/PmxTranspileRuntime/MEModelDirections.cs` | 按头骨更新脸部 SDF 方向，通过 PropertyBlock 隔离各模型实例 |
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成、出对照图与材质 ID 通道 |
 | `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读 `bindings.json`，建 LUT 贴图与各贴图，按材质名替换槽位 |
 | `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |

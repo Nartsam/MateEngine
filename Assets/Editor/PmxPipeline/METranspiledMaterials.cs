@@ -34,6 +34,7 @@ namespace MateEngine.PmxPipeline
         private readonly Dictionary<string, Texture2D> _texCache = new();
         private readonly List<UnityEngine.Object> _owned = new();
         private Texture2D _lut;
+        private bool _strict;
 
         private METranspiledMaterials(string bindingsPath, JObject data)
         {
@@ -45,12 +46,13 @@ namespace MateEngine.PmxPipeline
                 : Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), dir));
         }
 
-        public static METranspiledMaterials Load(string bindingsPath)
+        public static METranspiledMaterials Load(string bindingsPath, bool strict = false)
         {
             if (!File.Exists(bindingsPath))
                 throw new FileNotFoundException($"材质清单不存在：{bindingsPath}");
             var data = JObject.Parse(File.ReadAllText(bindingsPath, Encoding.UTF8));
             var self = new METranspiledMaterials(bindingsPath, data);
+            self._strict = strict;
 
             // 生成的 .shader 可能是刚写出来的，先让 Unity 导入，否则 Shader.Find 取空
             AssetDatabase.Refresh();
@@ -112,6 +114,7 @@ namespace MateEngine.PmxPipeline
             var shader = Shader.Find(shaderName);
             if (shader == null)
             {
+                if (_strict) throw new InvalidOperationException($"找不到着色器 {shaderName}（材质 {name}）");
                 Say($"!! 找不到着色器 {shaderName}（材质 {name}），该材质保持原样");
                 return;
             }
@@ -134,12 +137,13 @@ namespace MateEngine.PmxPipeline
             // Smart / Cubic 走自写的双三次采样，它自己做 4 次抽头。开 mipmap 会让这
             // 四次抽头各自算出隐式 LOD，取到不同层级——所以这类贴图不生成 mipmap。
             bool bicubic = interpolation == "Smart" || interpolation == "Cubic";
-            string key = $"{file}|{srgb}|{bicubic}";
+            string key = $"{file}|{srgb}|{bicubic}|{wrap}";
             if (_texCache.TryGetValue(key, out var cached)) return cached;
 
             string path = Path.Combine(_imagesDir, file);
             if (!File.Exists(path))
             {
+                if (_strict) throw new FileNotFoundException("转译贴图不存在", path);
                 Say($"!! 贴图文件不存在：{path}");
                 _texCache[key] = null;
                 return null;
@@ -152,6 +156,7 @@ namespace MateEngine.PmxPipeline
             {
                 Say($"!! 贴图解码失败：{path}");
                 UnityEngine.Object.DestroyImmediate(tex);
+                if (_strict) throw new InvalidOperationException($"贴图解码失败：{path}");
                 _texCache[key] = null;
                 return null;
             }
@@ -280,6 +285,8 @@ namespace MateEngine.PmxPipeline
             }
             foreach (var n in missing.Distinct())
                 Say($"!! 清单里没有材质 {n}，该槽位保持原样");
+            if (_strict && missing.Count > 0)
+                throw new InvalidOperationException("模型使用了未转译的材质：" + string.Join(", ", missing.Distinct()));
             Say($"已替换材质槽 {replaced} 个");
             return replaced;
         }
@@ -297,9 +304,25 @@ namespace MateEngine.PmxPipeline
             return null;
         }
 
+        public void SaveAssets(string folder)
+        {
+            Directory.CreateDirectory(folder);
+            AssetDatabase.Refresh();
+            // 先保存贴图，后保存引用它们的材质。保留 Texture2D 原始格式与色彩空间，
+            // 不经 PNG 往返，避免 LUT 量化或 sRGB 导入默认值改变节点语义。
+            int index = 0;
+            foreach (var texture in _owned.OfType<Texture2D>())
+                AssetDatabase.CreateAsset(texture, $"{folder}/Texture{index++:D3}.asset");
+            index = 0;
+            foreach (var material in ByName.Values)
+                AssetDatabase.CreateAsset(material, $"{folder}/Material{index++:D3}.mat");
+            AssetDatabase.SaveAssets();
+        }
+
         public void Dispose()
         {
-            foreach (var o in _owned) if (o != null) UnityEngine.Object.DestroyImmediate(o);
+            foreach (var o in _owned)
+                if (o != null && !AssetDatabase.Contains(o)) UnityEngine.Object.DestroyImmediate(o);
             _owned.Clear();
             ByName.Clear();
         }

@@ -664,6 +664,12 @@ Shader "{shader_name}"
     Properties
     {{
 {properties}
+        // 序列化到 Material/AssetBundle；仅有 HLSL uniform 声明不能作为资产契约。
+        [HideInInspector] _MESunDir ("Sun direction", Vector) = (0,0,0,0)
+        [HideInInspector] _MEHeadFront ("Head back direction", Vector) = (0,0,0,0)
+        [HideInInspector] _MEHeadRight ("Head right direction", Vector) = (0,0,0,0)
+        [HideInInspector] _MEGenMin ("Generated bounds minimum", Vector) = (0,0,0,0)
+        [HideInInspector] _MEGenInvSize ("Generated bounds inverse size", Vector) = (1,1,1,0)
     }}
 
     SubShader
