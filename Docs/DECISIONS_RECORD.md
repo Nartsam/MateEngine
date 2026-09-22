@@ -17,6 +17,7 @@
 | ADR-0009 | 2026-06-21 | VRM+RenderStyle 弯路复盘：.me 回归为主路径 | Accepted |
 | ADR-0010 | 2026-06-21 | 运行时可切换渲染风格；全屏后处理与透明窗口不兼容 | Accepted |
 | ADR-0011 | 2026-09-10 | 复刻 Blender 渲染预设改走节点图转译，放弃参数拟合 | Accepted |
+| ADR-0012 | 2026-09-22 | 渲染复刻管线是离线工具；bloom 需要改 App 渲染管线 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -549,7 +550,7 @@ App 实测：① 切风格模型有明显变化，但**设置菜单颜色也跟�
 - 新增 `Tools/PmxPipeline/export_blender_graph.py`（完整节点图导出器，含连线、插槽默认值、组接口、色带与曲线控制点）。原 `dump_render_preset.py` 仅保留供 UTS2 兜底路径使用，不得用于高保真复刻。
 - 参考资料落盘：`Docs/RenderPreset/graphs/`（四个预设的完整节点图）、`Docs/RenderPreset/vendor/`（配套导入插件副本）、`Docs/RenderRefs/`（Blender 参考截图）。
 - 实施计划见 `Docs/plans/2026-09-10-blender-graph-transpile.md`，其中列有 8 条"不知道就会静默出错"的转译陷阱。
-- **待解决**：预设启用了 bloom，而全屏后处理与透明分层窗口不兼容（ADR-0010）。需自写 alpha 感知的 bloom，或接受该项差异。主线先不做。
+- bloom 与透明分层窗口的冲突已在 ADR-0012 解决：自写了 alpha 感知的合成 pass，并决定为此改造 App 的渲染管线。
 
 ### 相关文件
 
@@ -557,3 +558,72 @@ App 实测：① 切风格模型有明显变化，但**设置菜单颜色也跟�
 - `Docs/plans/2026-09-10-blender-graph-transpile.md`：实施计划与已核实事实清单
 - `Docs/RenderPreset/`：节点图数据、配套插件副本
 - `archive/liltoon-npr-tuning`：lilToon 路线的全部归档产物
+
+## ADR-0012: 渲染复刻管线定位为离线工具；bloom 需要改造 App 渲染管线
+
+状态：Accepted　日期：2026-09-22
+
+### 背景
+
+ADR-0011 决定走节点图转译。转译器、描边烘焙与差分闭环落地后，九个角色的轮廓 IoU 稳定在
+0.998 以上、平均 ΔE76 在 1.1–3.0（对照 UTS2 基线 0.9677 / 11.00），用户已肉眼验收通过。
+接下来要回答两个集成问题：这套预处理放哪里，以及效果能不能整体烘进离线文件。
+
+### 决策一：预处理是仓库内的离线工具，不内置进 App
+
+这条流程依赖 **Blender 3.6**（求值几何节点得到描边外壳、导出节点图与预设内打包的贴图）
+和 **Unity 编辑器**（建网格、出 prefab / AssetBundle）。两者都不可能随程序分发，所以
+「选一个 `.pmx` + 对应的渲染预设 `.blend`，转换成可加载格式」在技术上只能是离线工具。
+App 只负责加载转换结果。
+
+入口与用法见 `Tools/PmxPipeline/README.md`。
+
+### 决策二：只有 bloom 必须改管线，其余全部可以烘进离线文件
+
+逐项核对的结论：
+
+| 东西 | 能否烘进 `.me` | 理由 |
+|---|---|---|
+| 逐材质着色（贴图、LUT、色带、法线贴图、matcap、脸部 SDF、程序化噪声） | 能 | 转译产物就是普通 Built-in RP 无光照着色器，不要求管线支持任何特性 |
+| 描边 | 能 | 是实体化外壳，网格里多出来的几个子网格而已 |
+| Filmic + High Contrast 视图变换 | 能 | 纯逐通道的一维 LUT，可在片元末端逐像素套用 |
+| **bloom** | **不能** | 屏幕空间效果，按定义装不进模型文件 |
+
+所以只有 bloom 这一项逼着改管线。它值 ΔE 4.17 → 1.86（"偏暗"与"明亮鲜艳"的差别），
+不能不要。
+
+### 决策三：走 A 路线——改造 App 渲染管线，不为了不改管线而降低效果
+
+需要三处改动：
+
+1. 3D 内容渲进开了 HDR 的离屏线性缓冲。
+2. alpha 感知的全屏合成（bloom + 视图变换）——代码已有，即
+   `Assets/PmxTranspileRuntime/MEPostCompose.{cs,shader}`。
+3. **把 UI 隔离在合成之外**。当前全场景只有一个相机，它同时渲染角色与
+   Screen-Space-Camera 的菜单画布，全屏调色会把菜单一起染了——这正是 ADR-0010 里
+   `GradeEnabled = false` 记录下的、曾被用户否决的现象。做法是给 3D 内容单开一个相机，
+   主相机只画 UI（或把菜单画布改为 Screen-Space-Overlay）。
+
+ADR-0010 的结论没有被推翻：**Built-in 的全屏后处理确实会破坏分层窗口的 alpha**。
+`MEPostCompose` 不是 Built-in 后处理栈，它是自写的、显式保留 alpha 的合成 pass。
+
+### 待决：轮廓外的辉光要不要在分层窗口里显示
+
+实测 Blender：开 bloom 后轮廓外有 314456 个像素的 RGB 变成非零（最亮到 95/255），但
+**alpha 仍然是 0**，与不开 bloom 时一模一样（半透明像素数都是 8828，一个不差）。
+Blender 把辉光只写进颜色通道，没碰 alpha。
+
+Blender 的图像编辑器按 RGB 显示、忽略 alpha，所以在 Blender 里看得见那圈辉光；而分层
+窗口按 alpha 合成，alpha=0 的像素完全透明、RGB 不参与显示。**照搬 Blender 的话，轮廓外
+的辉光在 App 里看不见**。轮廓内部（alpha=1）的辉光正常显示，画面从"偏暗"变"明亮鲜艳"
+主要就是这部分。
+
+要让外圈也可见，就得主动把 alpha 跟着辉光外扩（如 `alpha = max(alpha, 辉光亮度 × k)`）。
+这是**有意偏离 Blender 的输出**：差分数值会略微变差，但 App 里的观感更接近用户在
+Blender 里看到的那张图。等能在 App 里实际看到再定。
+
+### 相关文件
+
+- `Tools/PmxPipeline/README.md`：管线的操作参考
+- `Docs/plans/2026-09-10-blender-graph-transpile.md`：Phase 4 一节列有待办
+- `Assets/PmxTranspileRuntime/MEPostCompose.{cs,shader}`：alpha 感知合成

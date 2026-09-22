@@ -10,17 +10,25 @@
 
 ### 方式一：命令行构建（推荐）
 
+在仓库根目录执行：
+
 ```powershell
-& "<6000.2.6f2 版 Unity 安装文件夹>\Unity.exe" `
+& "<Unity 6000.2.6f2 的安装目录>\Editor\Unity.exe" `
   -batchmode -nographics -quit `
-  -projectPath "<项目路径>" `
+  -projectPath "." `
   -executeMethod BuildScript.BuildWindows `
-  -logFile "<项目路径>\Build\build.log"
+  -logFile ".\Build\build.log"
 ```
 
-& "D:\Program Files\Unity\Hub\Editor\6000.2.6f2\Editor\Unity.exe" -batchmode -nographics -quit -projectPath "." -executeMethod BuildScript.BuildWindows -logFile ".\Build\build.log"
+Unity 的安装目录随机器而异，不要抄别人的绝对路径。默认在
+`<盘符>\Program Files\Unity\Hub\Editor\6000.2.6f2\Editor\`；若 Unity Hub 设过自定义安装
+位置，路径记在 `%APPDATA%\UnityHub\secondaryInstallPath.json`。
 
-实时查看监控： Get-Content ".\Build\build.log" -Wait
+实时查看构建日志：
+
+```powershell
+Get-Content ".\Build\build.log" -Wait
+```
 
 构建产物输出到 `Build/MateEngine.exe`。首次构建约 5-10 分钟（含资产导入），后续约 2-5 分钟。
 

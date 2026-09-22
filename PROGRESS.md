@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-06-22（右键径向菜单“设置/使用 LLM 对话”按钮位置已交换；Model 根节点上移到 y=-0.74，给底部动画留出余量）
+- 上次更新：2026-09-22（PMX 渲染复刻：节点图转译管线扩到九个角色并通过肉眼验收；管线外部路径改为按本机解析）
 
 ## 当前状态
 
@@ -28,67 +28,97 @@
 - 托盘右键菜单已全部汉化为简体中文。
 - 设置面板 X 按钮改为隐藏窗口到托盘（不再退出）；双击托盘图标恢复窗口；只有右键菜单"退出"才真正退出。
 - 设置面板主滚动列表通过 `SettingsMenuScrollBoundsLimiter` 在运行时动态适配实际内容高度：测量最底部元素（Delete AI History）→ 调整 VLG `padding.bottom` → CSF PreferredSize 自然适配 Content 高度 → 强制 Clamped + 滚回顶部。无需手动调整 Content SizeDelta 或禁用 CSF。
-- 当前只保留 `Docs/ARCHITECTURE.md` 与 `Docs/DECISIONS_RECORD.md` 两个项目设计文档；`Docs/RENDER_STYLE_DESIGN.md`、`Docs/PMX_TO_VRM.md` 已随 VRM+RenderStyle 路径归档，不存在于当前工作树。
+- 设计文档为 `Docs/ARCHITECTURE.md` 与 `Docs/DECISIONS_RECORD.md`；PMX 渲染复刻另有 `Tools/PmxPipeline/README.md`（操作参考）与 `Docs/plans/2026-09-10-blender-graph-transpile.md`（实测结论）。`Docs/RENDER_STYLE_DESIGN.md`、`Docs/PMX_TO_VRM.md` 已随 VRM+RenderStyle 路径归档，不在工作树中。
 - `Assets/PmxImported/`、`Build/PmxModels/` 等 PMX 生成物是本地忽略产物；当前工作树中可能保留历史 `.me`/`.vrm` 验证输出，不作为仓库源状态或生产路线依据。
 
 ## 正在处理
 
-- PMX 模型导入与原神/崩坏/P5X 风格渲染离线管线正在贯通。当前结论与状态：
-  - 实际渲染管线是 **Built-in**（非文档原先所写 URP），已修正 `Docs/ARCHITECTURE.md`。
-  - 工程已内置 UTS2（`MATE ENGINE - Packages/Toon/`）、Poiyomi、lilToon 等 Built-in NPR 卡通着色器。
-  - 用户接受离线预处理、模型数量少。推荐走 **Unity Editor 离线管线 → `.me`**：编辑器内导入 PMX（保留原始日文 MMD 形态键与物理）→ 配 Humanoid Avatar → MMD 物理转 DynamicBone（已在工程内）→ 用 UTS2/lilToon 还原 `.blend` 预设外观 → `MateEngine/ME Model Exporter` 打包 `.me` → 现有 `VRMLoader.LoadAssetBundleModel` 加载。该路线下载逻辑（动画控制器赋值、组件注入、舞蹈口型）全部复用现有实现。
-  - 关键依据：`AvatarDanceShapeConverter` 对带 MMD 形态键（まばたき/あ/い/う/え/お…）的模型走 `bypassForThisAvatar` 直驱路径，保留原始形态键即可让舞蹈口型原生工作——这正是之前 PMX→VRM 丢口型的根因。
-  - 里程碑：M1 解析器 → M2 Humanoid → M3 物理转 DynamicBone → M4 Blender 无头提取预设映射 UTS2/lilToon → M5 一键 batch + `.me` 打包。
-  - **M1a 已实测通过**：`Assets/Editor/PmxPipeline/`（PmxModel/PmxReader/MEPmxPipeline，纯编辑器程序集）batch 解析「特工丽塔/删披风删骨骼.pmx」成功——PMX2.0/UTF-16LE、26366 顶点、26 材质、268 骨骼、61 形态键（59 顶点 morph）、545 刚体（520 动态）、933 关节；**11/11 舞蹈口型形态键齐全**；材质用 `衣服a.png` 底色 + `mc1/mc3.png` sphere(matcap, blend=2)，正好对口 UTS2/lilToon。
-  - **M1b 已实测通过**（用户视觉验收）：`PmxMeshBuilder` 在编辑器构建 prefab+网格+骨架+59 BlendShape(日文名)+基础材质，输出 `Assets/PmxImported/丽塔/`。坐标转换坑：MMD→Unity 必须用 **180° 绕 Y（负 X 负 Z）+ 保持原缠绕**（纯旋转、无镜像）；最初误用负 Z 单轴=反射，导致左右镜像（刘海遮错眼）。MMD 默认缩放 0.08（约 1.56m）。已知点：少数表情（照れ 腮红等）在 MMD 是材质 morph 非顶点 morph，不会成为 BlendShape，待后续单独处理。
-  - **M2 已实测通过**（batch：avatar isValid/isHuman=True，53 骨骼映射，无左右互换报错）：`PmxHumanoid` 用 MMD 日文骨名→Humanoid 字典 + 手臂 A-pose→T-pose 归一化 + `AvatarBuilder.BuildHumanAvatar`。关键映射：**Hips=腰**（上半身/下半身 是 腰 的兄弟，腰 是脊柱与双腿唯一共同祖先；映射 Hips=下半身 会失败）。LowerArm=ひじ、Hand=手首（捩 twist 骨作为未映射中间骨保留）。生成 `丽塔_Avatar.asset` 并挂到 prefab 的 Animator。
-  - **M3 已 batch 构建**（待运行验证）：`PmxPhysics` 把 PMX 动态刚体(PhysicsMode≠0)按链根（父骨非动态的动态骨）转 DynamicBone（工程已内置，`m_Roots` 支持多链）。特工丽塔：3 个 DynamicBone 组件、37 条链（hair=9 / skirt=26 / breast=2），按 头发/裙子/胸/其他 分类套经验参数。v1 不加碰撞体（裙子可能穿腿），待后续。DynamicBone 仅运行时仿真，需 Play 模式或 App 验证。
-  - **M5 已 batch 导出**（待 App 运行验证）：`MEPmxPipeline.ExportMe` 复用 AssetBundle 打包逻辑把 prefab 连依赖打成 `.me`（排除 .cs，脚本在 player 解析）。产物 `Build/PmxModels/丽塔.me`（3MB，35 依赖）。加载路径核实：AvatarHandler 多用 `animator.GetBoneTransform`（humanoid），我们的 avatar 有效；舞蹈口型走 MMD 形态键 bypass；物理走 DynamicBone。VRM 专属眼球 LookAt（`Vrm10Instance`）会失效（非 VRM 模型），属可接受降级。
-  - **M5 首次运行验证发现 3 个问题，已诊断+修复（待复测）**。用 `DumpSkinning` 诊断坐实根因，未靠猜：
-    1. 腿不打弯/角色飘（我的转换 bug）：腿部蒙皮权重挂在 MMD「D」変形ボーン（左足D/右足D/ひざD/足首D，755/709/415... 顶点），这些骨骼仅靠 付与(inherit weight 1.0) 获得旋转、且是控制骨(足/ひざ/足首)的兄弟而非子级，引擎驱动控制骨时蒙皮不动→腿直。**修复**：`BuildSkinRemap` 把「付与源非自身祖先」的变形骨蒙皮权重重指到源控制骨（几何等价，D 覆盖控制骨），并向死分支传播（足先EX）。本模型重指 26 骨。捩(twist)骨因源是祖先、靠父子级跟随，不重指、无损失。
-    2. 拖动时部分服装固定在空间中/拉伸：受影响部位均为 DynamicBone 动态骨；`m_Inert` 0.3–0.5 过高导致拖动时布料滞留世界空间。**修复**：`m_Inert` 降到 ~0（裙 0、发 0.05），布料跟随身体、仅靠运动摆动。
-    3. 服装穿模：无碰撞体固有问题，**暂缓**（后续 M3.5 给腿/躯干加 DynamicBoneCollider）。
-  - **第二轮复测：腿已修复✓；新发现 口型不动 + 头发剧烈抖动，已修（待三测）**：
-    4. 口型/表情不动：`UniversalBlendshapes` 只驱动 VRM（VRMBlendShapeProxy/Vrm10），非 VRM 模型走 `AvatarDanceShapeConverter` 的 bypass，靠舞蹈片段按 transform 路径直驱形态键。引擎舞蹈片段把形态键曲线绑到 `Body` 路径（converter 的 candidatePaths={"Body","Model/Body","Face"}），而我们 SMR 在 root → 不命中。**修复**：把 SkinnedMeshRenderer 挂到 root 下的子物体 `Body`（骨架仍在 root）。⚠️注意：抽查的 3 个内置舞蹈片段都**没有**形态键曲线，若用户导入的舞蹈也无面部 morph 轨，任何模型侧修复都无法产生口型——需用确含 morph 的舞蹈验证。
-    5. 头发发梢剧烈抖动（欠阻尼振荡）：DynamicBone 参数过软。**修复**：大幅提高 m_Damping(发 0.6)/m_Stiffness(0.3)，降 elasticity，m_Inert 0.1-0.15。
-  - 穿模(碰撞体)与拖动粘连若复测仍在，再单独诊断/加碰撞体。
-  - **第三轮复测：口型已动✓、腿正常✓；粘连根因找到并修复，头发继续调**：
-    6. 粘连/拉伸（用户已用 PMX 编辑器删过飘带/下摆）：`DumpOrphans` 诊断出 **20 个 `衣饰` 顶点被权重到 `操作中心`(bone0，原点处不变形的视点骨)**，最大距骨 11.3u——是删除后残留几何被 PMX 编辑器重指到 bone0 的垃圾面，原点不跟身体动→粘连。**修复**：`FindOrphanVerts` 把主权重落在非变形骨（操作中心/IK）的顶点判为孤儿，构网格时丢弃含孤儿顶点的面（本模型丢 40 面）。属模型瑕疵，导入器自动兜底。
-    7. 头发上轮过僵→这轮反而过飘/幅度大/归位慢（欠刚度欠弹性、阻尼偏高）。再调：stiffness↑(发 0.55)、elasticity↑(0.25)、damping↓(0.3)。物理手感主观，建议改用 Play 模式实时调参再回填。
-  - **M3.5 已代码完成并 batch 导出（待 App 运行复测）**：`PmxPhysics` 在 Humanoid Avatar/Animator 可用时，按腿部与髋部骨骼自动生成裙摆专用 `DynamicBoneCollider`，碰撞体作为对应骨骼的子物体随动画运动。第三轮根据“下摆被撑起、头发被顶起/穿模”的截图修正过强问题：碰撞体只绑定到 Skirt 类 DynamicBone，Hair/Breast/Other 不再吃身体碰撞；移除横向髋部胶囊和胸/上身胶囊，保留更保守的大腿/小腿/髋/骨盆共 6 个碰撞体；裙摆粒子半径降为 `0.012`。Unity batch 已重新生成特工丽塔 prefab，并导出 `Build/PmxModels/丽塔.me`；仍需在 App 内加载验证裙摆/头发状态。
-  - `.gitattributes` 已给 vendored lilToon shader 路径增加 `text eol=crlf` 例外：仓库 blob 仍规范化，Windows 工作树允许 CRLF，避免 Unity/包文件反复产生 shader 换行假脏。
-  - **M4 高保真 HoYo 复刻尝试（UTS2 多轮调试）已封存，根因沉淀进下方踩坑表**：用 Blender 无头抽预设映射 UTS2（`PmxRenderPreset`/`PmxMaterialMapper`/`PmxPipelineOptions`/`BuildAndExport`/运行时 `PmxModelRenderProfile`）经多轮 App 验收，逐一定位并修复了发紫、脸部碎裂、偏暗偏素、后处理失效等根因。结论不是放弃 `.me` 或 UTS2 基线，而是不再把 UTS2 当作高保真 HoYo 多通道语义复刻方案；clean-baseline、`PmxStyleConfig` 和 `.me` 导出仍是当前生产路径的一部分。
+### PMX 渲染复刻：节点图转译（当前主线）
 
-  **M4 踩坑表（PMX->Unity UTS2 全流程）**：
+目标是让「PMX 模型 + 配套 `.blend` 渲染预设」在本软件中呈现与 Blender/EEVEE 一致的观感。
+路线是**把预设的节点图整体转译成 HLSL**，不是用通用卡通着色器调参（背景见 ADR-0011，
+三条参数拟合路线均已证伪）。
 
-  | 现象 | 根因 | 解决 |
-  |---|---|---|
-  | 模型左右镜像 | 仅取负 Z + 反转缠绕 = 镜面反射 | MMD->Unity 绕 Y 180 (同时取负 X 和 Z) + 保持原始缠绕 + scale 0.08 |
-  | 腿不弯/部位悬空 | 蒙皮权重落在 付与/D 变形骨（仅靠 inherit 驱动） | BuildSkinRemap：inherit 权重重定向到源控制骨 |
-  | 粘连/拉伸 | PMX 编辑器删面残留的孤立顶点（蒙皮到 操作中心/IK 骨） | FindOrphanVerts 丢弃远离主骨的面 |
-  | 跳舞口型/表情不动 | UniversalBlendshapes 仅 VRM；舞蹈绑定 Body 路径 | SMR 放在 Body 子物体；保留日文形态键名走 bypass |
-  | 全身发紫 | MetalMap + mc1/mc3 被当 matcap 叠加 | matcap 全关；highColor 仅预设显式给有效非黑色才启用 |
-  | **脸部碎裂** | 脸 UV 被错配 Body_LightMap(身体 UV) 当阴影位置图 | 不把 LightMap/Facemap 当 UTS2 阴影位置图（UTS2 无此通道语义） |
-  | 脸部碎感（次因） | 共面贴片同 renderQueue z-fight；双面渲染 | 按材质序号递增 renderQueue；强制单面 CullMode=2 |
-  | 偏暗/偏素/皮肤偏红 | **误判**：以为相机无 PostProcessLayer（字面量 grep 未命中）；实为 `PmxModelRenderProfile` 劫持场景默认关闭的 Bloom/AO Volume 不可靠 + 皮肤暖色偏移 | 后处理改由 `RenderStyleManager` 专属全局 Volume 统管（相机第 4 组件本就有 `PostProcessLayer`，监听所有层）；皮肤暖色中性化，由 style.json 微调。见 ADR-0010 |
-  | 渲染参数改一次重跑整链 | 风格参数写死在 C# | PmxStyleConfig 解耦到逐模型 JSON + Editor 实时调 .mat |
-  | HoYo 游戏贴图找不到 | 贴图打包在 .blend 里、无散文件 | 阶段 0 Blender 无头抽图 |
-  | Blender 5.0.1 抽图报错 | 插件路径不匹配 | 用 Blender 3.6 |
-  | VRM 加载后整模型几乎不可见 | MToon _Color 取自预设 [0,0,0,0] -> 全黑/透明 | 有贴图材质白色 tint；运行时 NormalizeTint 降级守卫 |
+- **怎么跑、文件都干什么**：`Tools/PmxPipeline/README.md`
+- **全部实测结论与分阶段记录**：`Docs/plans/2026-09-10-blender-graph-transpile.md`
+- **集成决策**：ADR-0012（离线工具定位；只有 bloom 必须改 App 渲染管线）
 
-  - **风格解耦（已完成）**：`PmxStyleConfig`（`Tools/PmxPipeline/styles/<模型>.style.json`）把材质风格调参从 C# 移到逐模型 JSON（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength` + 逐材质覆盖），支持"改 JSON 重跑"与"Editor 实时调 `*.mat`"两种不重编译的迭代循环（见 `Docs/ARCHITECTURE.md`）。
-  - ~~**VRM+RenderStyle 备选路线（已并入 ADR-0008）**~~ **[ARCHIVED 2026-06-21]**：该路径 N0-N3 实现完成后实测不可行（HoyoToon 渲染异常 + SpringBone 物理模型不兼容）。代码归档至 `archive/vrm-detour` 分支。复盘见 `Docs/DECISIONS_RECORD.md` ADR-0009。`.me` 管线（UTS2 + DynamicBone）确认为唯一生产路径。
+Phase 0–3.6 已完成并通过用户肉眼验收。九个角色、正背两视角的当前成绩：
+
+| 角色 | 材质 | front | back |
+|---|---|---|---|
+| 小蕾耶拉 | 28/28 | 0.9991 / 1.44 | 0.9991 / 1.19 |
+| 灯 | 31/31 | 0.9983 / 1.73 | 0.9983 / 1.08 |
+| 特工丽塔 | 30/30 | 0.9980 / 1.84 | 0.9980 / 1.63 |
+| 灯-战损版 | 31/31 | 0.9986 / 1.89 | 0.9987 / 3.52 |
+| 李素裳 | 29/29 | 0.9983 / 1.90 | 0.9984 / 1.47 |
+| 蕾耶拉 | 34/34 | 0.9983 / 1.90 | 0.9983 / 1.37 |
+| 大格蕾修 | 34/34 | 0.9988 / 2.51 | 0.9989 / 2.00 |
+| 寻梦者 | 32/33 | 0.9982 / 2.67 | 0.9982 / 2.38 |
+| 大月下 | 34/34 | 0.9984 / 3.01 | 0.9991 / 5.51 |
+
+（轮廓 IoU / 交集内平均 ΔE76。对照：UTS2 基线 0.9677 / 11.00。寻梦者少的那一个是预设库里
+的遗留材质，引用了一张失效图片，且没挂在网格上。）
+
+**下一步是 Phase 4 集成**，待办清单在计划文档的 Phase 4 一节：描边外壳挪进
+`PmxMeshBuilder` → 转译材质落成真正的资产 → 接 `materialProfile` 出 `.me` → 按 A 路线改
+相机 → App 内实测。
+
+**仍未收敛的两处**（不阻塞集成，细节见计划文档 Phase 3.6 末尾）：
+
+- 大月下 `头巾`（大块半透明纱，ΔE ≈ 8，与视角无关）：alpha 已验证完全正确，错的是辐射
+  亮度。已排除分层、bloom、背面剔除、曲线顺序、贴图色彩空间、AO/SSR。
+- 蕾耶拉 `裙带` 的金粉颗粒比基准更多更亮。噪声与哈希已逐点验证无误，问题在下游。
+
+### PMX 几何与物理管线（已可用，随渲染路线一起维护）
+
+`Assets/Editor/PmxPipeline/` 负责解析 PMX、建网格/骨架/BlendShape、配 Humanoid Avatar、
+把 MMD 刚体关节近似成 DynamicBone，并打包 `.me`。这部分与材质路线无关，三次材质路线更替
+都没有动它。踩过的坑见下方「PMX 几何与物理踩坑表」。
+
+遗留项：
+
+- M3.5 裙摆碰撞体需要在 App 内运行复测。
+- 材质 morph 类表情（照れ 腮红等，非顶点 morph）需单独方案。
 
 ## 下一步
 
-- `.me` 管线（UTS2 + DynamicBone）已确认为唯一生产路径。后续迭代方向：
-  - 继续打磨 UTS2 材质参数（逐模型 `style.json` 调参，见 `PmxStyleConfig`）
-  - M3.5 碰撞体 App 内运行复测
-  - ~~接通相机后处理（Bloom + ColorGrading）~~ **已完成**：由运行时 `RenderStyleManager` 全局统管（专属全局 Volume 经主场景相机既有 `PostProcessLayer` 生效），设置菜单可切 `默认/鲜艳/柔和`。见 ADR-0010
-  - 运行验证渲染风格下拉：实时切换、可逆、重启记忆；视觉复核下拉在 `= GENERAL` 组的位置
-  - 处理材质 morph 类表情（照れ 腮红等，非顶点 morph，需单独方案）
+- **PMX 渲染复刻 Phase 4 集成**（主线）：见计划文档 Phase 4 待办清单。
+- M3.5 裙摆碰撞体 App 内运行复测。
+- 处理材质 morph 类表情（照れ 腮红等，非顶点 morph，需单独方案）。
 
 ## 已完成
+
+### PMX 几何与物理踩坑表
+
+这些是 PMX → Unity 的几何/骨骼/物理转换踩过的坑，与材质路线无关，**当前仍然有效**。
+
+| 现象 | 根因 | 解决 |
+|---|---|---|
+| 模型左右镜像 | 仅取负 Z + 反转缠绕 = 镜面反射 | MMD→Unity 绕 Y 180°（同时取负 X 和 Z）+ 保持原始缠绕 + scale 0.08 |
+| 腿不弯/部位悬空 | 蒙皮权重落在 付与/D 变形骨（仅靠 inherit 驱动，是控制骨的兄弟而非子级） | `BuildSkinRemap`：把 inherit 权重重定向到源控制骨 |
+| 拖动时服装粘连/拉伸 | ① DynamicBone `m_Inert` 过高，布料滞留世界空间；② PMX 编辑器删面后残留顶点被重指到 `操作中心`(bone0) | ① `m_Inert` 降到 ~0；② `FindOrphanVerts` 丢弃主权重落在非变形骨的面 |
+| 跳舞口型/表情不动 | `UniversalBlendshapes` 只驱动 VRM；舞蹈片段把形态键曲线绑在 `Body` 路径上 | SkinnedMeshRenderer 放到 root 下的 `Body` 子物体；保留日文形态键名走 `AvatarDanceShapeConverter` 的 bypass |
+| 头发抖动 / 过飘 | DynamicBone 参数欠阻尼或欠刚度 | 物理手感主观，建议用 Play 模式实时调参再回填 |
+| Humanoid Avatar 构建失败 | 映射 `Hips = 下半身` | `Hips = 腰`（腰是脊柱与双腿唯一共同祖先）；`LowerArm = ひじ`、`Hand = 手首`，捩骨作为未映射中间骨保留 |
+
+> 注意：`AvatarDanceShapeConverter` 对带 MMD 形态键（まばたき/あ/い/う/え/お…）的模型走
+> `bypassForThisAvatar` 直驱路径，**保留原始形态键就能让舞蹈口型原生工作**——这正是当初
+> PMX→VRM 丢口型的根因。另外，抽查的内置舞蹈片段都没有形态键曲线，若用户导入的舞蹈也无
+> 面部 morph 轨，任何模型侧修复都产生不了口型。
+
+### 材质路线的三次失败（勿重试）
+
+| 路线 | 结论 | 复盘 |
+|---|---|---|
+| PMX→VRM + MToon / HoyoToon | HoyoToon 靠数据挖掘网格的顶点色重建切线，PMX 没有 | ADR-0009 |
+| UTS2 参数微调 | 目标是 LightMap/SDF 贴图驱动的多通道语义，UTS2 不吃；且离线盲烤无预览 | ADR-0010 |
+| lilToon 参数调优 | 同因：通用着色器只暴露二十几个旋钮，拟合维度不足，理论上无法收敛 | ADR-0011，产物归档在分支 `archive/liltoon-npr-tuning` |
+
+三条路线共享同一个错误前提：**把 `.blend` 预设当成一组材质参数**。实际它是 712 个计算
+节点的图。`PmxStyleConfig` / `PmxMaterialMapper` / `styles/*.style.json` 作为 UTS2 兜底
+保留，不得破坏，但不再是生产路径。
+
 
 ### 文档渲染管线表述修正
 
@@ -214,6 +244,9 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 
 | 日期 | 验证项 | 结果 | 备注 |
 |---|---|---|---|
+| 2026-09-22 | PMX 渲染：管线扩到九个角色 | 通过（用户肉眼验收） | 轮廓 IoU ≥0.998、平均 ΔE76 1.1–3.0。换角色暴露并修掉 8 个缺陷：`Mix` 只支持 RGBA（大月下 20 个材质退回原材质）、`HASHED` 错映射成「不透明 + 直接写 alpha」（战损灯头发被打成筛子，IoU 0.9616）、没复现 EEVEE 的「Show Backface」深度预通道（灯的长发鬼影）、导出器从不导出输出插槽默认值（灯头顶高光变黑斑）、正交相机视线向量、`Noise Texture` 4D、RGB Curves 复合顺序、失效贴图引用。另补齐 Blender 报告的 AO/SSR/采样数记录，并新增 `Tools/PmxPipeline/verify/` 逐点核对哈希与噪声。详见计划文档 Phase 3.5/3.6 |
+| 2026-09-22 | 管线外部路径改为按本机解析 | 已验证 | Blender/Unity/模型库改走「命令行 > 环境变量 > 本机配置 > 自动探测」，不再写死默认值；仓库内路径本来就由 `$PSScriptRoot` 推出、跟着仓库走。移走本机配置后实测能自动探测到 Blender 与 Unity，模型库给出可操作的报错 |
+| 2026-09-19 | PMX 渲染：Phase 0–3 完成（转译器 / bloom / 描边） | 通过（用户肉眼验收） | 丽塔四视角 IoU 0.998、平均 ΔE 1.6–1.9。bloom 靠实测 EEVEE 的点扩散函数复刻；描边直接搬 Blender 几何节点求值出的外壳；4× 超采样对齐 Blender 的着色超采样。详见计划文档 Phase 0/1/2.5/3 |
 | 2026-09-10 | PMX 渲染：重新评估复刻路线，改走节点图转译 | 分析完成，实施未开始 | lilToon 路线（迭代到 Phase 2.18）与 UTS2 路线同因失败：目标是 `.blend` 预设那张 712 个计算节点的图，通用卡通着色器只暴露二十几个可调项，**参数拟合维度不足、理论上无法收敛**；且旧导出脚本从不导出节点连线，算法在第一步就已丢失。**决定性发现：该预设是无光照纯函数**（Color 直连 Surface，实测与 Emission 逐位相同；唯一的灯 energy=0，World 为空；全量枚举确认零 EEVEE 光照/屏幕空间节点），因此可整体转译成 HLSL 做到精确复刻而非近似。已核实：对模型的硬要求仅「一套名为 `UVMap` 的 UV + 材质名匹配」，丽塔 PMX 全部满足，**不需要顶点色**（ADR-0009 的顶点色障碍不适用于本路线）。全部未提交产物已归档到分支 `archive/liltoon-npr-tuning`。详见 ADR-0011 与 `Docs/plans/2026-09-10-blender-graph-transpile.md` |
 | 2026-06-22 | PMX 渲染：UTS2 烤法微调追 HoYo（❌失败已回退） | 两轮越改越差，全部 `git checkout` 回退到基线并重烤兜底 | B1（材质恢复高光）→ 腿变"油脂圆柱"（UTS2 柔和镜面≠官方硬边高光）；硬卡通 pass（feather→0.02/加深阴影/MetalMap高光/描边×2/brightness1.0）→ 惨白看不清+头发碎纹理。**根因：目标是 LightMap/SDF 贴图驱动，UTS2 不吃；且离线盲烤无预览无法收敛。UTS2 参数微调路线作废，勿重试。** 基线烤法保留为兜底（偏素但不崩）。下一步另起：lilToon（先小场景实测再上）。详见 ADR-0010 失败路线。 |
 | 2026-06-22 | 右键径向菜单按钮位置与角色底部裁切余量 | 静态验证完成，待 Unity 运行复核 | 主场景 Buttons[0]/[4] 交换 Settings/Chat 引用；Model 根节点 y -0.8 -> -0.74；未改窗口尺寸、相机参数或按钮事件。 |

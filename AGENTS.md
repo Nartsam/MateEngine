@@ -17,10 +17,13 @@ MateEngine 是基于 GitHub 开源桌面宠物软件 Mate-Engine 的个人 fork�
 
 1. 读 `AGENTS.md`，确认目标、硬约束和文档维护规则。
 2. 读 `PROGRESS.md`，确认当前完成状态、正在处理的问题和下一步。
-2.5. 若涉及 PMX 导入/渲染任务线：PMX 管线走 **`.me` 格式**（UTS2 + DynamicBone），VRM+RenderStyle 路径已归档（复盘见 `Docs/DECISIONS_RECORD.md` ADR-0009）。踩坑经验见 `PROGRESS.md` §正在处理。
 3. 涉及系统结构、脚本职责、数据路径时读 `Docs/ARCHITECTURE.md`。
 4. 涉及技术路线、兼容性、构建方式、数据格式等重要取舍时读 `Docs/DECISIONS_RECORD.md`。
 5. 涉及构建时读 `BUILD_MANUAL.md`。
+6. 涉及 PMX 导入或渲染复刻时，读 `Tools/PmxPipeline/README.md`（怎么跑、文件都干什么），
+   需要背景或实测数据再读 `Docs/plans/2026-09-10-blender-graph-transpile.md`。
+   **注意**：渲染复刻走的是**节点图转译成 HLSL**（ADR-0011），不是用通用卡通着色器调参——
+   MToon/HoyoToon、UTS2、lilToon 三条参数拟合路线均已证伪，勿重试（ADR-0009/0010/0011）。
 
 ## 硬性约束
 
@@ -33,7 +36,7 @@ MateEngine 是基于 GitHub 开源桌面宠物软件 Mate-Engine 的个人 fork�
 - 默认 Avatar（Zome）版权为 All Rights Reserved，不可随自制 build 重新分发。
 - 修改 Unity 资产时必须保留必要 `.meta` 文件，避免破坏引用。
 - 不要随意删除或重命名已序列化字段。即使业务代码不再使用，也可能被场景、Prefab、Inspector 或旧 JSON 引用。
-- 任务完成后，必须同步更新相关文档。确保文档中描述的内容能够对应项目的实际状态。
+- 任务完成后，必须同步更新相关文档（对应关系见下方「改了什么就更新哪份」）。文档描述必须能对应项目的实际状态；发现文档与实际脱节时，先改文档再继续。
 
 ## 核心功能列表
 
@@ -57,16 +60,32 @@ MateEngine 是基于 GitHub 开源桌面宠物软件 Mate-Engine 的个人 fork�
 - 对旧路径、旧 PlayerPrefs、旧 JSON 字段做迁移时，要保留回退和异常处理。
 - 移除功能时优先保持序列化兼容：字段可以保留，行为可以禁用。
 - Steam 依赖已移除。不要重新引入 Steamworks.NET、Steam Workshop、Steam DRM 或 `steam_api64.dll`。
-- 重要技术选择必须写入 `Docs/DECISIONS_RECORD.md`。
-- 改动当前进度、任务列表、验证结果后必须同步更新 `PROGRESS.md`。
-- 改动目录结构、核心脚本职责、数据路径、启动流程后必须更新 `Docs/ARCHITECTURE.md`。
+- 文档同步的对应关系见下方「改了什么就更新哪份」。
 
 ## 关键文档
 
 | 文档 | 作用 |
 |---|---|
-| `PROGRESS.md` | 当前状态、下一步、验证记录、已知问题 |
+| `PROGRESS.md` | 当前状态、下一步、验证记录、已知问题、踩坑表 |
 | `Docs/ARCHITECTURE.md` | 技术栈、目录结构、核心系统、数据路径 |
-| `Docs/DECISIONS_RECORD.md` | 架构决策记录 |
+| `Docs/DECISIONS_RECORD.md` | 架构决策记录（ADR） |
 | `BUILD_MANUAL.md` | 构建环境和构建命令 |
+| `Tools/PmxPipeline/README.md` | PMX 渲染复刻管线：怎么跑、文件职责、环境与路径解析 |
+| `Docs/plans/2026-09-10-blender-graph-transpile.md` | 渲染复刻的实测结论与分阶段记录 |
+| `Docs/RenderPreset/README.md` | 预设的参考数据：节点图、视图变换 LUT、配套插件副本 |
+| `Tools/PmxPipeline/verify/README.md` | 节点求值语义的逐点核对装置与已核实结论 |
 | `README.md` | 上游/用户向项目介绍，不作为 AI 记忆主文档 |
+
+### 改了什么就更新哪份
+
+| 改动 | 必须同步的文档 |
+|---|---|
+| 任何任务完成、验证结果、已知问题变化 | `PROGRESS.md`（含「验证记录」一行） |
+| 目录结构、核心脚本职责、数据路径、启动流程 | `Docs/ARCHITECTURE.md` |
+| 技术路线取舍、兼容性结论、数据格式决定 | `Docs/DECISIONS_RECORD.md` 新增 ADR |
+| PMX 管线的文件增删、命令行开关、路径约定 | `Tools/PmxPipeline/README.md` |
+| 渲染复刻的实测结论、阶段验收数值 | `Docs/plans/2026-09-10-blender-graph-transpile.md` |
+| 新核实的 Blender 节点语义 | `Tools/PmxPipeline/verify/README.md` 的结论表 |
+
+**推翻旧结论时就地改写，不要在别处打补丁。** 同一个事实在多处重复描述、或者靠「修正：
+其实……」层层叠加，是文档失真的主要来源。ADR 可以被后续 ADR 修正，但原处必须加指向。

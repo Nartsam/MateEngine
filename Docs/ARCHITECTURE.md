@@ -47,8 +47,13 @@
 | `Assets/MATE ENGINE - Shaders/` | Poiyomi、lilToon、Mochie 等 Shader 资源（MToon 在 `MATE ENGINE - Packages/VRM/MToon/`，UTS2 在 `MATE ENGINE - Packages/Toon/`） |
 | `Assets/DynamicBone/` | DynamicBone 运行时组件；PMX 离线管线把 MMD 刚体/关节近似转换为这些组件 |
 | `Assets/Editor/` | 编辑器脚本，包含命令行构建脚本与编辑器工具 |
-| `Assets/Editor/PmxPipeline/` | PMX 离线导入管线：解析 PMX、生成网格/骨架/BlendShape、Humanoid Avatar、DynamicBone/碰撞体、Blender 渲染预设映射，并导出 `.me` |
-| `Tools/PmxPipeline/` | PMX 离线管线辅助脚本（Blender background 渲染预设导出）与 `styles/<模型名>.style.json` 逐模型风格配置 |
+| `Assets/Editor/PmxPipeline/` | PMX 离线导入管线的 Unity 侧：解析 PMX、生成网格/骨架/BlendShape、Humanoid Avatar、DynamicBone/碰撞体、装配转译材质与描边外壳、差分对照渲染，并导出 `.me` |
+| `Tools/PmxPipeline/` | PMX 渲染复刻管线的 Blender / Python 侧：节点图导出、转译器、描边烘焙、双端差分验收。操作参考见该目录的 `README.md` |
+| `Tools/PmxPipeline/hlsl/` | 转译器内联进每个生成着色器的节点求值函数库 |
+| `Tools/PmxPipeline/verify/` | Blender 节点求值语义的逐点核对装置（哈希、噪声、曲线顺序） |
+| `Tools/PmxPipeline/styles/` | **UTS2 兜底路径**的逐模型风格配置，不属于转译路线 |
+| `Assets/PmxTranspileRuntime/` | 转译路线的运行时合成（bloom + 视图变换），alpha 感知 |
+| `Assets/Generated/PmxTranspiled/` | 转译出的着色器与材质清单，已忽略；一条命令可重建 |
 | `Packages/com.unity.addressables/` | 本地嵌入的 Addressables 包；运行时路径被 patch 为便携缓存 |
 | `ProjectSettings/` | Unity 项目设置 |
 | `Packages/` | Unity Package Manager 清单 |
@@ -86,6 +91,10 @@
 | `Assets/Editor/PmxPipeline/PmxRenderPreset.cs` | Blender 渲染预设 JSON DTO 与材质匹配逻辑 |
 | `Assets/Editor/PmxPipeline/PmxMaterialMapper.cs` | PMX 材质与 Blender preset 参数到 UTS2 材质的映射；贴图材质保留 PMX 贴图原色，只接受有效 preset 颜色，并使用保守的软 toon 阴影、rim 与轮廓参数；matcap/highColor 默认关闭；消费 `PmxStyleConfig` 的逐模型风格覆盖。**注：2026-06-22 试过在此恢复高光/硬卡通追 HoYo，失败已回退，勿重试，见 ADR-0010 失败路线** |
 | `Assets/Editor/PmxPipeline/PmxStyleConfig.cs` | 逐模型风格配置（JSON）DTO 与加载器；把材质风格调参从 C# 解耦到数据。Shader 无关旋钮：`materialProfile`、`skinWarmth`、`brightness`、`outlineScale`、`rimStrength`，及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖 |
+| `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 差分验收的对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成，出对照图与材质 ID 通道 |
+| `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读转译器的 `bindings.json`，建 LUT 贴图与各贴图，按材质名替换槽位 |
+| `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把 Blender 烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
+| `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。**不是 Built-in 后处理栈**，是显式保留 alpha 的自写 pass，不破坏分层透明窗口（见 ADR-0010、ADR-0012） |
 | `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleManager.cs` | 运行时可切换渲染风格单例（自举，无需改场景）。内置 `默认/鲜艳/柔和`；`SetStyle` 驱动相机 `RenderStyleImageEffect` 做**保留 alpha 的全屏饱和/对比/亮度**分级（路线 A），随 `SettingsData.renderStyle` 持久化。**不用 Built-in 全屏后处理**——它会破坏分层透明窗口的 alpha（见 ADR-0010）|
 | `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleImageEffect.cs` | 相机 `OnRenderImage` 跑 `Hidden/RenderStyleGrade`；inactive 时纯 passthrough（`默认`=无效果）|
 | `Assets/MATE ENGINE - Shaders/Resources/RenderStyleGrade.shader` | 全屏调色 shader，保留源 alpha 且不动全透明像素 → 透明窗口安全。放 Resources 供运行时 `Resources.Load` |
@@ -161,35 +170,68 @@ Build 产物优先使用 `{exeDir}/UserData/`。Editor 和命令行构建进程�
 
 ## PMX 离线管线
 
-PMX 管线是 Editor-only 预处理流程，目标是把 PMX 模型、MMD 物理和 Blender NPR 渲染预设转换为 Humanoid 模型，打包为 `.me` 格式（UTS2 材质 + DynamicBone 物理）。操作流程见 `PROGRESS.md` §正在处理（M1-M5 阶段）及 M4 踩坑表。路线取舍见 `Docs/DECISIONS_RECORD.md` ADR-0008；曾探索的 VRM+RenderStyle 路径已于 2026-06-21 归档，复盘见 ADR-0009。
+Editor-only 的预处理流程：把 PMX 模型、MMD 物理和配套 `.blend` 渲染预设转换成 Humanoid
+模型并打包 `.me`。**它依赖 Blender 3.6 与 Unity 编辑器，不进 App**（ADR-0012）。
 
-路径规则：
+管线分两段，彼此独立：
 
-- 外部输入只通过 CLI 参数或本机 ignored 配置注入，不在业务代码中写死 Blender、PMX、`.blend`、模型目录或导出文件名。
-- CLI 优先级最高：`-pmx`、`-preset`、`-blender`、`-out`、`-outputRoot`、`-tempRoot`、`-modelName`。
-- 本机默认值保存在 `Library/MateEngineUserData/PmxPipeline/settings.json`，仅供菜单和本机复用；`Library/` 已忽略，不提交。
-- 缺少必需的 Blender/PMX/preset 输入时，batch 入口报清晰错误；不会回退到某个开发机绝对路径。
-- 生成到 Unity 资产里的内容只保存贴图引用、颜色、float、开关和已解析的后处理数值，不保存外部绝对路径。
-- Blender preset 的贴图节点默认 `baseColor` 可能是黑色占位值；导入器不会把这类颜色直接乘到 PMX 贴图上，而是保留贴图原色，并把 preset 作为 toon 参数、matcap、后处理等 hints 使用。缺少专用 SDF/lightmap 时，UTS2 映射优先使用浅色 shade tint 与软 feather，避免硬切大色块。
+| 段 | 做什么 | 状态 |
+|---|---|---|
+| 几何与物理 | 解析 PMX → 网格/骨架/BlendShape → Humanoid Avatar → MMD 刚体关节转 DynamicBone → `.me` | 已可用，三次材质路线更替都没动它 |
+| 材质 | 渲染预设 → 材质 | **主线是节点图转译**；UTS2 映射作为兜底保留 |
 
-主要 batch 入口：
+### 材质：节点图转译（主线）
 
-- `MateEngine.PmxPipeline.MEPmxPipeline.BuildModel`
-- `MateEngine.PmxPipeline.MEPmxPipeline.BuildAndExport`
-- `MateEngine.PmxPipeline.MEPmxPipeline.ExportMe`
+预设是一张**无光照纯函数**的节点图，因此可以整体转译成 HLSL 精确复刻，而不是用通用卡通
+着色器的旋钮去拟合。三条参数拟合路线（MToon/HoyoToon、UTS2、lilToon）均已证伪，勿重试。
 
-### 风格调参（解耦，无需改代码）
+- **怎么跑、每个文件干什么**：`Tools/PmxPipeline/README.md`
+- **路线取舍**：ADR-0011；**集成决策**：ADR-0012
+- **实测结论与分阶段验收数值**：`Docs/plans/2026-09-10-blender-graph-transpile.md`
 
-材质风格不再写死在 C# 里，而是逐模型的 `Tools/PmxPipeline/styles/<模型名>.style.json`（缺失则用代码默认；`-style <path>` 可覆盖）。旋钮均为 shader 无关概念，便于将来切换材质阶段（如 HoYo 着色器）后沿用。两种迭代循环：
+数据流：`.blend` →（节点图 JSON + 打包贴图 + 描边外壳）→ 转译器 →（逐材质 HLSL +
+`bindings.json`）→ Unity 侧装配到 PMX 网格上。验收靠 Blender 无头渲染与 Unity 渲染的
+逐像素差分（轮廓 IoU + 交集内 ΔE76 + 逐材质分解），不靠肉眼判断。
 
-1. **配置循环（无需重编译）**：编辑 `<模型名>.style.json`（`skinWarmth`/`brightness`/`outlineScale`/`rimStrength`，或逐材质 `baseColor`/`shadeColor`/`outline`），重跑 `BuildModel`（不必跑 Blender）即可。改的是数据，不触发 C# 编译。
-2. **Editor 实时循环（最快，无需重编译/重建材质）**：构建一次后，在 Unity 编辑器里直接选中生成的材质 `Assets/PmxImported/<模型名>/*.mat`，在 Inspector 拖 UTS2 滑块实时预览；满意后只跑 `ExportMe`（仅重新打包 prefab → `.me`，约 10 秒，不跑 Blender、不重建材质）。
+### 材质：UTS2 兜底（保留，非生产路径）
 
-> 注意：`materialProfile` 当前仅 `uts2`。`PmxMaterialMapper` 是当前材质阶段实现；未来只有在新的 Built-in 着色器经过本项目实测验证后，才应新增对应 profile 分支，配置框架与 Editor 工作流可沿用。
+`PmxMaterialMapper` + `PmxStyleConfig` + `Tools/PmxPipeline/styles/<模型名>.style.json`。
+`materialProfile = "uts2"` 时启用。它做不到高保真复刻（根因见 ADR-0010/0011），保留是为了
+不破坏已经烤出去的旧 `.me`，以及在转译路线出问题时有个能出图的退路。
 
-### 新增模型流程
+风格旋钮均为 shader 无关概念：`skinWarmth`/`brightness`/`outlineScale`/`rimStrength`，
+以及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖。两种不重编译的迭代循环：改
+`style.json` 重跑 `BuildModel`；或构建一次后在 Inspector 里直接调 `Assets/PmxImported/
+<模型名>/*.mat`，满意后只跑 `ExportMe`。
 
-提供 PMX（+ 可选 `.blend` 渲染预设），跑 `BuildAndExport -pmx <pmx> [-preset <blend> -blender <exe>]`。骨架/物理对任何「MMD 准标准」模型通用；需要补的是：① 该模型一份 `styles/<模型名>.style.json`；② 若材质命名非中文 HoYo 习惯，可能要扩 `PmxMaterialMapper.Classify` 的候选词。`<模型名>` 由 `-modelName` 或 PMX 内部名解析得到（决定输出目录与风格文件名）。
+### 路径规则
+
+外部输入只通过 CLI 参数、环境变量或本机 ignored 配置注入，**不在业务代码或脚本默认值里
+写死** Blender、Unity、PMX、`.blend` 或模型库路径。
+
+- 仓库内的路径一律由脚本自身位置推出（PowerShell 用 `$PSScriptRoot`，C# 用项目相对路径），
+  跟着仓库走，换机器换目录都不受影响。
+- 仓库外的三个路径按「命令行 > 环境变量 > 本机配置 > 自动探测」解析，全落空则报错说明怎么
+  配，不回退到某台开发机的绝对路径。对应关系见 `Tools/PmxPipeline/README.md`。
+- 本机配置是 `Library/MateEngineUserData/PmxPipeline/settings.json`（`Library/` 已忽略），
+  PowerShell 与 C# 两侧共用这一个文件。
+- 生成到 Unity 资产里的内容只保存贴图引用、颜色、float、开关和已解析的数值，不保存外部
+  绝对路径。
+
+### 主要入口
+
+| 入口 | 作用 |
+|---|---|
+| `Tools/PmxPipeline/run_ref_diff.ps1` | 渲染复刻的完整闭环：导出节点图 → 烘描边 → 转译 → 双端渲染 → 差分 |
+| `MateEngine.PmxPipeline.MEPmxPipeline.BuildModel` | 由 PMX 构建 prefab |
+| `MateEngine.PmxPipeline.MEPmxPipeline.BuildAndExport` | 构建并打包 `.me` |
+| `MateEngine.PmxPipeline.MEPmxPipeline.ExportMe` | 只重新打包 `.me` |
+
+### 新增模型
+
+把 `<角色>/` 放进模型库目录，内含与目录同名的 `.pmx` 和 `渲染预设.blend`，然后跑
+`run_ref_diff.ps1 -Character <角色> -ExportGraph -BakeOutline`。骨架与物理对任何「MMD 准
+标准」模型通用；渲染侧不需要逐模型配置——转译器直接读该角色自己的预设。
 
 ## 构建
 
