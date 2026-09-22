@@ -152,6 +152,15 @@ class Context:
     def image(self, name):
         m = self.images.get(name)
         if m is None:
+            # 预设里可能存着失效的图片引用（未打包、原始文件在作者机器上），Blender
+            # 自己也加载不到、size 为 0。这类要和「忘了跑 --images」区分开：前者不是
+            # 我们的缺陷，通常还挂在没被网格使用的遗留材质上。
+            dead = next((i for i in self.graph.data.get("images", [])
+                         if i.get("name") == name and not i.get("packed")
+                         and list(i.get("size") or [0, 0]) == [0, 0]), None)
+            if dead is not None:
+                raise Unsupported("贴图 %r 在预设里就是失效引用（未打包、尺寸 0），"
+                                  "Blender 本身也加载不到" % name)
             raise Unsupported("贴图清单里没有 %r（先跑 export_blender_graph.py --images）"
                               % name)
         return m
@@ -321,6 +330,30 @@ class MaterialEmitter:
         self.put(n, "Color", v, "RGBA")
         self.put(n, "Alpha", "%s.a" % v, "VALUE")
 
+    def _const_out(self, n, socket, socket_type):
+        """Value / RGB 是纯常量节点，没有输入，常量在**输出**插槽的 default_value 上。
+
+        拿不到就直接报错，不能退化成 0：旧版导出器不写输出插槽的默认值，静默取 0
+        会让整条链变黑，而且差分数值上只是一小块，极易漏过去。
+        """
+        v = n.out_defaults.get(socket)
+        if v is None:
+            raise Unsupported("%s 的输出插槽 %s 没有默认值（导出器需为 "
+                              "formatVersion >= 4，重跑 --export-graph）"
+                              % (n.type, socket))
+        self.put(n, socket, literal(v, socket_type), socket_type)
+
+    def _n_value(self, n, needed):
+        self._const_out(n, "Value", "VALUE")
+
+    def _n_rgb(self, n, needed):
+        self._const_out(n, "Color", "RGBA")
+
+    def _n_invert(self, n, needed):
+        e = "ME_Invert(%s, %s)" % (self.val(n, "Fac", "VALUE"),
+                                   self.val(n, "Color", "RGBA"))
+        self.put(n, "Color", self.decl("RGBA", e, "invert"), "RGBA")
+
     def _n_math(self, n, needed):
         op = n.props.get("operation")
         tpl = MATH_OPS.get(op)
@@ -371,8 +404,28 @@ class MaterialEmitter:
         self.put(n, "Result", self.decl("VALUE", e, "maprange"), "VALUE")
 
     def _n_mix(self, n, needed):
-        if n.props.get("data_type") != "RGBA":
-            raise Unsupported("Mix data_type=%s" % n.props.get("data_type"))
+        dt = n.props.get("data_type") or "FLOAT"
+        if dt in ("FLOAT", "VECTOR"):
+            # 只有 RGBA 模式才有混合方式可选，FLOAT / VECTOR 一律是线性插值
+            # （node_shader_mix.cc 的 sh_node_mix_float / _vector）。
+            if dt == "FLOAT":
+                fac = self.val(n, "Factor_Float", "VALUE")
+                a, b, out, t = "A_Float", "B_Float", "Result_Float", "VALUE"
+            elif n.props.get("factor_mode") == "NON_UNIFORM":
+                fac = self.val(n, "Factor_Vector", "VECTOR")
+                a, b, out, t = "A_Vector", "B_Vector", "Result_Vector", "VECTOR"
+            else:
+                fac = self.val(n, "Factor_Float", "VALUE")
+                a, b, out, t = "A_Vector", "B_Vector", "Result_Vector", "VECTOR"
+            if n.props.get("clamp_factor"):
+                fac = "saturate(%s)" % fac
+            e = "lerp(%s, %s, %s)" % (self.val(n, a, t), self.val(n, b, t), fac)
+            if n.props.get("clamp_result"):
+                e = "saturate(%s)" % e
+            self.put(n, out, self.decl(t, e, "mix"), t)
+            return
+        if dt != "RGBA":
+            raise Unsupported("Mix data_type=%s" % dt)
         bt = n.props.get("blend_type") or "MIX"
         fn = MIX_FN.get(bt)
         if fn is None:
@@ -462,6 +515,17 @@ class MaterialEmitter:
             raise Unsupported("Separate Color mode=%s" % mode)
         self.put(n, "Alpha", "%s.a" % c, "VALUE")
 
+    def _n_combine_color(self, n, needed):
+        mode = n.props.get("mode") or "RGB"
+        r, g, b = (self.val(n, k, "VALUE") for k in ("Red", "Green", "Blue"))
+        # 着色器版的 Combine Color 没有 Alpha 输入，alpha 固定 1
+        e = "float4(%s, %s, %s, 1.0)" % (r, g, b)
+        if mode == "HSV":
+            e = "ME_HsvToRgb(%s)" % e
+        elif mode != "RGB":
+            raise Unsupported("Combine Color mode=%s" % mode)
+        self.put(n, "Color", self.decl("RGBA", e, "comb"), "RGBA")
+
     def _n_combxyz(self, n, needed):
         e = "float3(%s, %s, %s)" % (self.val(n, "X", "VALUE"),
                                     self.val(n, "Y", "VALUE"),
@@ -521,19 +585,22 @@ class MaterialEmitter:
         self.put(n, "Vector", self.decl("VECTOR", e, "vtrans"), "VECTOR")
 
     def _n_tex_noise(self, n, needed):
-        if (n.props.get("noise_dimensions") or "3D") != "3D":
-            raise Unsupported("Noise Texture %s 维未实现" % n.props.get("noise_dimensions"))
+        dim = n.props.get("noise_dimensions") or "3D"
+        if dim not in ("3D", "4D"):
+            raise Unsupported("Noise Texture %s 维未实现" % dim)
         # Vector 未接线时 Blender 取 Generated（物体包围盒归一化坐标），不是 (0,0,0)
         co = ("ME_Generated(i.opos)" if "Vector" in n.unlinked
               else self.val(n, "Vector", "VECTOR"))
         val = self.tmp("noiseV")
         col = self.tmp("noiseC")
+        args = [co]
+        if dim == "4D":
+            args.append(self.val(n, "W", "VALUE"))
+        args += [self.val(n, k, "VALUE")
+                 for k in ("Scale", "Detail", "Roughness", "Distortion")]
         self.lines.append("    float %s; float4 %s;" % (val, col))
-        self.lines.append(
-            "    ME_NoiseTexture3D(%s, %s, %s, %s, %s, %s, %s);"
-            % (co, self.val(n, "Scale", "VALUE"), self.val(n, "Detail", "VALUE"),
-               self.val(n, "Roughness", "VALUE"), self.val(n, "Distortion", "VALUE"),
-               val, col))
+        self.lines.append("    ME_NoiseTexture%s(%s, %s, %s);"
+                          % (dim, ", ".join(args), val, col))
         self.put(n, "Fac", val, "VALUE")
         self.put(n, "Color", col, "RGBA")
 
@@ -607,13 +674,21 @@ Shader "{shader_name}"
         Cull [_Cull]
         ZWrite {zwrite}
         Blend {blend}
+{passes}
+    }}
+}}
+"""
 
-        Pass
+
+# 单个 Pass。主通道与可选的深度预通道共用同一份代码，靠 ME_PREPASS 区分。
+PASS_TEMPLATE = """        Pass
         {{
+{pass_state}
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 3.0
+{pass_defines}
             #include "UnityCG.cginc"
 
             #define ME_LUT_ROWS {lut_rows}
@@ -671,7 +746,13 @@ Shader "{shader_name}"
             {{
                 // EEVEE 对非背面剔除的材质会把法线翻向观察者，这里照做
                 float3 N = normalize(i.wnormal) * ((facing >= 0.0) ? 1.0 : -1.0);
-                float3 I = normalize(_WorldSpaceCameraPos - i.wpos);
+                // EEVEE 的 cameraVec()：透视下是「表面指向相机位置」，**正交下是
+                // 常量的相机朝向**。基准图用的就是正交相机，照透视公式算会让视线在
+                // 画面边缘偏出约 5°——漫反射看不出来，但布林冯高光是高次幂加硬阈值，
+                // 边界会被这点角度推着跑（金属件肉眼可见）。
+                float3 I = (unity_OrthoParams.w > 0.5)
+                             ? normalize(UNITY_MATRIX_V[2].xyz)
+                             : normalize(_WorldSpaceCameraPos - i.wpos);
                 float3 trueN = normalize(cross(ddy(i.wpos), ddx(i.wpos))) *
                                ((facing >= 0.0) ? 1.0 : -1.0);
                 float backfacing = (facing >= 0.0) ? 0.0 : 1.0;
@@ -682,16 +763,24 @@ Shader "{shader_name}"
 
                 MEClosure cl = {root};
                 float alpha = ME_ClosureAlpha(cl);
+{alpha_policy}
+            #ifdef ME_PREPASS
+                // Blender 里关掉「Show Backface」时，EEVEE 会先让该材质走一遍深度
+                // 预通道，于是每个像素只有最靠前的那一层被着色。这里复用同一份
+                // alpha 做裁剪：完全透明的片元不该写深度，否则会把它后面本该可见
+                // 的层一起抹掉。
+                clip(alpha - {prepass_cutoff});
+                return 0.0;
+            #else
                 float3 lin = max(cl.radiance, 0.0);
                 if (_MEDeferViewTransform > 0.5) return float4(lin, alpha);
                 float3 disp = ME_ViewTransform(_MELut, 0.0, ME_LUT_ROWS, lin,
                                                ME_VT_LO, ME_VT_HI);
                 return float4(disp, alpha);
+            #endif
             }}
             ENDCG
         }}
-    }}
-}}
 """
 
 
@@ -744,6 +833,39 @@ BLEND_STATE = {
     "BLEND": ("Transparent", "Transparent", "Off", "One OneMinusSrcAlpha", 3000),
 }
 
+# 深度预通道里丢弃片元的 alpha 阈值。EEVEE 没有文档说明预通道是否参与 alpha
+# 裁剪，这个值靠差分实测定：完全不裁会让近处半透明片元把后面本该可见的层抹掉。
+# 能接受的最低节点图格式版本，见 export_blender_graph.py 的 formatVersion。
+GRAPH_FORMAT_MIN = 5
+
+PREPASS_CUTOFF = 0.0
+
+# Blender 的 HASHED（随机 alpha 测试）：EEVEE 把这类材质放在**不透明**通道里，每个
+# 采样要么整个不透明、要么被丢弃，最终图上的分数 alpha 完全来自采样覆盖率。直接把
+# alpha 写进不透明通道是错的——alpha≈0 的片元既不消失、又用深度挡住了后面的层，
+# 灯-战损版的头发因此被打成筛子（轮廓 IoU 0.9616，少了 7101 px）。
+#
+# 这里用确定性阈值代替 EEVEE 的随机抖动：覆盖率交给 4× 超采样产生。偏差只出现在
+# 大片中间 alpha 上（EEVEE 是渐变，阈值是 0.5 处一刀切）；实测两版差异见计划文档。
+HASHED_CUTOFF = 0.5
+
+# Blender 的 HASHED 用随机 alpha 测试：每个采样取一个 [0,1) 上均匀分布的阈值，
+# 存活概率恰好等于 alpha，多采样平均即收敛到正确的 alpha 合成，且与绘制顺序无关
+# （深度写入负责遮挡）。EEVEE 靠 TAA 的 64 个采样收敛，我们靠 4× 超采样的 16 个
+# 子采样。
+#
+# 固定 0.5 阈值在 alpha 双峰（非 0 即 1）的材质上与随机版逐像素等价，但只要 alpha
+# 是连续的就会露馅：蕾耶拉的 `裙带` 用噪声驱动 alpha 做金粉溶解，硬阈值把平滑渐变
+# 切成了一片硬斑点。
+HASHED_POLICY = ("                clip(alpha - ME_HashedAlphaThreshold(i.wpos));\n"
+                 "                alpha = 1.0;")
+
+PREPASS_STATE = ("            ZWrite On\n"
+                 "            ColorMask 0\n"
+                 "            Blend Off")
+
+BODY_JOINER = "\n"
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -755,6 +877,14 @@ def main():
     args = ap.parse_args()
 
     graph = Graph.load(args.graph)
+    # 导出器每次扩字段都必须重跑导出，否则旧 JSON 缺字段会**静默**退化（漏 LUT 表、
+    # 漏插值方式、漏输出插槽默认值各坑过一次）。这里硬卡版本，不给它静默的机会。
+    fv = graph.data.get("formatVersion")
+    if not isinstance(fv, int) or fv < GRAPH_FORMAT_MIN:
+        raise SystemExit(
+            "[transpile] !! %s 是 formatVersion %r，需要 >= %d。"
+            "带 -ExportGraph 重跑 run_ref_diff.ps1 重新导出。"
+            % (os.path.basename(args.graph), fv, GRAPH_FORMAT_MIN))
     if graph.data.get("formatVersion", 0) < 3:
         print("[transpile] !! 节点图是旧格式（formatVersion=%s），缺 LUT 表与 "
               "interpolation，请重跑 export_blender_graph.py"
@@ -826,15 +956,30 @@ def main():
             "            sampler2D %s;\n            float4 %s_TexelSize;"
             % (t["prop"], t["prop"]) for t in em.textures)
 
+        # Blender 里关掉「Show Backface」（show_transparent_back = False）时，EEVEE
+        # 会给该材质加一遍深度预通道，效果是每个像素只显示最靠前的那一层。不复现
+        # 它，层层叠加的头发片会在本该被挡住的地方透出半透明鬼影。
+        hide_backface = (blend == "BLEND" and
+                         mm.get("show_transparent_back") is False)
+
+        pass_kw = dict(
+            lut_rows="{LUT_ROWS}", vt_lo=fnum(ctx.view_lo), vt_hi=fnum(ctx.view_hi),
+            library=lib, samplers=samplers,
+            body=BODY_JOINER.join("            " + l.strip() for l in em.lines),
+            root=root_expr, prepass_cutoff=fnum(PREPASS_CUTOFF),
+            alpha_policy=(HASHED_POLICY if blend == "HASHED" else ""))
+        passes = ""
+        if hide_backface:
+            passes += PASS_TEMPLATE.format(
+                pass_state=PREPASS_STATE,
+                pass_defines="            #define ME_PREPASS", **pass_kw)
+        passes += PASS_TEMPLATE.format(pass_state="", pass_defines="", **pass_kw)
+
         src = SHADER_TEMPLATE.format(
             graph=os.path.basename(args.graph), mat_name=name,
             node_count=len(ex.nodes), tex_count=len(em.textures),
             shader_name=shader_name, properties=props, render_type=rt,
-            queue_tag=qtag, zwrite=zwrite, blend=blend_cmd,
-            lut_rows="{LUT_ROWS}", vt_lo=fnum(ctx.view_lo), vt_hi=fnum(ctx.view_hi),
-            library=lib, samplers=samplers,
-            body="\n".join("            " + l.strip() for l in em.lines),
-            root=root_expr)
+            queue_tag=qtag, zwrite=zwrite, blend=blend_cmd, passes=passes)
         pending.append((os.path.join(shader_dir, ascii_id + ".shader"), src))
 
         materials.append({
@@ -843,7 +988,7 @@ def main():
             "blendMethod": blend, "shadowMethod": mm.get("shadow_method"),
             "backfaceCulling": bool(mm.get("use_backface_culling")),
             "alphaThreshold": mm.get("alpha_threshold"),
-            "renderType": rt, "queue": queue,
+            "renderType": rt, "queue": queue, "hideBackface": hide_backface,
             "nodeCount": len(ex.nodes), "notes": sorted(set(em.notes)),
         })
 

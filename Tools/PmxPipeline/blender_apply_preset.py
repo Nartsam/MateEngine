@@ -288,6 +288,22 @@ def inspect(mesh, arm, preset_path, lib_mat_names, expect_graph):
         "look": sc.view_settings.look,
         "exposure": round(sc.view_settings.exposure, 6),
         "gamma": round(sc.view_settings.gamma, 6),
+        # 下面这些以前没记录，等于默认「它们是关的」——属于没有依据的假设。
+        # 只要有一项其实开着，Unity 侧就永远补不上，而且差分只表现为局部偏亮/偏暗。
+        "use_gtao": sc.eevee.use_gtao,
+        "gtao_distance": round(sc.eevee.gtao_distance, 6),
+        "gtao_factor": round(sc.eevee.gtao_factor, 6),
+        "gtao_quality": round(sc.eevee.gtao_quality, 6),
+        "use_gtao_bent_normals": sc.eevee.use_gtao_bent_normals,
+        "use_gtao_bounce": sc.eevee.use_gtao_bounce,
+        "use_ssr": sc.eevee.use_ssr,
+        "use_ssr_refraction": sc.eevee.use_ssr_refraction,
+        "use_motion_blur": sc.eevee.use_motion_blur,
+        "use_soft_shadows": sc.eevee.use_soft_shadows,
+        "use_overscan": sc.eevee.use_overscan,
+        "taa_render_samples": sc.eevee.taa_render_samples,
+        "film_transparent": sc.render.film_transparent,
+        "filter_size": round(sc.render.filter_size, 6),
     }
     say("场景效果：bloom=%s(%.3f) view_transform=%s look=%s" % (
         sc.eevee.use_bloom, sc.eevee.bloom_intensity,

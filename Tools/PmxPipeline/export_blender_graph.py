@@ -48,6 +48,24 @@ def parse_args():
     return out, images
 
 
+# 仓库根。脚本位于 <repo>/Tools/PmxPipeline/ 下。
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
+
+def require_in_repo(path, what):
+    """确保产物落在仓库内。
+
+    曾经因为调用方传了相对路径、而 Blender 的工作目录不是仓库根，把 19 张贴图写进了
+    C 盘根目录的 Build 里——正好违反「零外部污染」这条硬约束，而且没有任何报错。相对路径在这里
+    一律按仓库根解析，解析完仍在仓库外就直接失败，不静默写出去。
+    """
+    p = path if os.path.isabs(path) else os.path.join(REPO_ROOT, path)
+    p = os.path.abspath(p)
+    if os.path.commonpath([p, REPO_ROOT]) != REPO_ROOT:
+        raise SystemExit("[export_graph] !! %s 落在仓库外，拒绝写入：%s" % (what, p))
+    return p
+
+
 def val(v):
     """Serialize a socket default_value / property to plain JSON."""
     if v is None:
@@ -126,9 +144,14 @@ def dump_curve_mapping(cm):
 def _curve_table_key(cm, payload):
     """烤 RGB 曲线的 257 项表。
 
-    Blender 的求值顺序是「先逐通道曲线、再合成曲线」（BKE_curvemapping_premultiply
-    把 cm[3] 复合进 cm[0..2] 的 premul_table），EEVEE 采样的就是复合后的表。
-    cm[3] 是 UI 上的 C 通道，cm[0..2] 是 R/G/B。
+    求值顺序是「**先合成曲线 cm[3]、再逐通道曲线 cm[0..2]**」，即
+    cm[ch](cm[3](x))，和 BKE_curvemapping_evaluateRGBF 一致。cm[3] 是 UI 上的 C
+    通道，cm[0..2] 是 R/G/B。
+
+    这个顺序是实测定的，不是照文档抄的：给 C 与 R 各设一条明显非恒等的曲线、喂已知
+    常量、用 Standard 视图变换渲一张 EXR，结果只和这一种顺序对得上。写反了不会报错，
+    只有在 C 与某条通道曲线都非恒等时才显形——大月下那块大纱的自发光走的正是这条
+    链（Strength 5.1），整片偏亮 ΔE 8。
     """
     n = len(cm.curves)
     if n < 4:
@@ -152,8 +175,8 @@ def _curve_table_key(cm, payload):
         x = i / float(CM_TABLE_SIZE - 1)
         row = []
         for ch in range(3):
-            v = cm.evaluate(cm.curves[ch], x) if ch < n else x
-            row.append(cm.evaluate(combined, v) if combined else v)
+            v = cm.evaluate(combined, x) if combined else x
+            row.append(cm.evaluate(cm.curves[ch], v) if ch < n else v)
         # 第 4 项对齐 BKE_curvemapping_table_RGBA 的布局（它放的是 cm[3] 自己的表）
         row.append(cm.evaluate(combined, x) if combined else x)
         table.append(row)
@@ -196,7 +219,10 @@ def dump_image(img):
 
 def dump_socket(s, is_output):
     d = {"name": s.name, "identifier": s.identifier, "type": s.type}
-    if not is_output and hasattr(s, "default_value"):
+    # 输出插槽的 default_value 也必须导出：Value / RGB 这类常量节点没有输入，常量
+    # 就存在输出插槽上。漏掉它不会报错，只会让整条链静默变成 0——灯的头发高光因此
+    # 变成一块黑斑。Shader 类插槽没有 default_value，由 hasattr 挡掉。
+    if hasattr(s, "default_value"):
         d["default"] = val(s.default_value)
     if getattr(s, "hide_value", False):
         d["hide_value"] = True
@@ -409,8 +435,11 @@ def extract_images(out_dir):
 
 def main():
     out_path, images_dir = parse_args()
+    out_path = require_in_repo(out_path, "节点图")
+    if images_dir:
+        images_dir = require_in_repo(images_dir, "贴图目录")
     data = {
-        "formatVersion": 3,
+        "formatVersion": 5,
         "blender": bpy.app.version_string,
         "file": bpy.data.filepath,
         "scene": dump_scene(),

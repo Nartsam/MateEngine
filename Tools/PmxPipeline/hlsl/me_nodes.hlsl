@@ -172,6 +172,12 @@ float4 ME_HueSat(float hue, float sat, float value, float fac, float4 col)
     return lerp(col, o, fac);
 }
 
+// Invert（node_shader_invert.cc）。只反 RGB，alpha 原样透传；Fac 不钳制。
+float4 ME_Invert(float fac, float4 col)
+{
+    return float4(lerp(col.rgb, 1.0 - col.rgb, fac), col.a);
+}
+
 // ---- 混合（material.c 的 ramp_blend，alpha 一律取 A 的）--------------------
 // 注意：所有分支的最后一步都是 outcol.a = col1.a，不是混合后的 alpha。
 float4 ME_MixBlend(float t, float4 a, float4 b)  { float4 o = lerp(a, b, t); o.a = a.a; return o; }
@@ -404,6 +410,147 @@ void ME_NoiseTexture3D(float3 co, float scale, float detail, float roughness,
     color = float4(value,
                    ME_fractal_noise(p + ME_random_vec3_offset(3.0), detail, roughness),
                    ME_fractal_noise(p + ME_random_vec3_offset(4.0), detail, roughness),
+                   1.0);
+}
+
+// ---- 随机 alpha 测试（Wyman & McGuire，EEVEE 的 hashed_alpha_threshold）------
+// Blender 的 HASHED 混合模式：每个采样用一个在 [0,1) 上均匀分布的阈值裁剪，于是
+// 存活概率恰好等于 alpha，多采样平均后收敛到正确的 alpha 合成——而且天然与绘制
+// 顺序无关（深度写入负责遮挡）。
+//
+// EEVEE 靠 TAA 的 64 个采样收敛，每个采样抖一次 hashAlphaOffset；我们没有时间维
+// 度，改由 4× 超采样提供 16 个子采样。阈值按屏幕导数量化，在 4× 分辨率下正好每个
+// 子采样取一个独立值，平均后同样是无偏的。
+float ME_HashedAlphaThreshold(float3 co)
+{
+    float max_deriv = max(length(ddx(co)), length(ddy(co)));
+    float pix_scale = 1.0 / max(max_deriv, 1e-8);
+    float pix_scale_log = log2(pix_scale);
+    float2 pix_scales = float2(exp2(floor(pix_scale_log)), exp2(ceil(pix_scale_log)));
+
+    float2 a = float2(ME_hash_v3f(floor(pix_scales.x * co)),
+                      ME_hash_v3f(floor(pix_scales.y * co)));
+    float fac = frac(pix_scale_log);
+    float x = lerp(a.x, a.y, fac);
+
+    // 两个尺度插值出来的 x 不再均匀分布，过一遍 CDF 拉回均匀，否则存活概率就不等
+    // 于 alpha，覆盖率会系统性偏掉。
+    float m = min(fac, 1.0 - fac);
+    float one_m = 1.0 - m;
+    float denom = 1.0 / max(2.0 * m * one_m, 1e-8);
+    float one_x = 1.0 - x;
+    float3 cases = float3(x * x * denom,
+                          (x - 0.5 * m) / max(one_m, 1e-8),
+                          1.0 - (one_x * one_x * denom));
+    float threshold = (x < one_m) ? ((x < m) ? cases.x : cases.y) : cases.z;
+    return clamp(threshold, 1e-6, 1.0);
+}
+
+// ---- Perlin 噪声 4D --------------------------------------------------------
+// 和 3D 同源（gpu_shader_material_noise.glsl），只是梯度取 32 个方向、插值多一层，
+// 归一化常数换成 noise_scale4。
+float4 ME_random_vec4_offset(float seed)
+{
+    return float4(100.0 + ME_hash_v2f(float2(seed, 0.0)) * 100.0,
+                  100.0 + ME_hash_v2f(float2(seed, 1.0)) * 100.0,
+                  100.0 + ME_hash_v2f(float2(seed, 2.0)) * 100.0,
+                  100.0 + ME_hash_v2f(float2(seed, 3.0)) * 100.0);
+}
+
+float ME_noise_grad4(uint hash, float x, float y, float z, float w)
+{
+    uint h = hash & 31u;
+    float u = h < 24u ? x : y;
+    float v = h < 16u ? y : z;
+    float t = h < 8u ? z : w;
+    return (((h & 1u) != 0u) ? -u : u) +
+           (((h & 2u) != 0u) ? -v : v) +
+           (((h & 4u) != 0u) ? -t : t);
+}
+
+float ME_quad_mix(float v0, float v1, float v2, float v3,
+                  float v4, float v5, float v6, float v7,
+                  float v8, float v9, float v10, float v11,
+                  float v12, float v13, float v14, float v15,
+                  float x, float y, float z, float w)
+{
+    return lerp(ME_tri_mix(v0, v1, v2, v3, v4, v5, v6, v7, x, y, z),
+                ME_tri_mix(v8, v9, v10, v11, v12, v13, v14, v15, x, y, z), w);
+}
+
+float ME_noise_perlin4(float4 v)
+{
+    float4 Xi = floor(v);
+    float4 Xf = v - Xi;
+    float4 u = float4(ME_noise_fade(Xf.x), ME_noise_fade(Xf.y),
+                      ME_noise_fade(Xf.z), ME_noise_fade(Xf.w));
+    int4 X = (int4)Xi;
+    uint x0 = asuint(X.x), y0 = asuint(X.y), z0 = asuint(X.z), w0 = asuint(X.w);
+    uint x1 = asuint(X.x + 1), y1 = asuint(X.y + 1);
+    uint z1 = asuint(X.z + 1), w1 = asuint(X.w + 1);
+    float fx = Xf.x, fy = Xf.y, fz = Xf.z, fw = Xf.w;
+    float gx = fx - 1.0, gy = fy - 1.0, gz = fz - 1.0, gw = fw - 1.0;
+
+    float r = ME_quad_mix(
+        ME_noise_grad4(ME_hash_uint4(x0, y0, z0, w0), fx, fy, fz, fw),
+        ME_noise_grad4(ME_hash_uint4(x1, y0, z0, w0), gx, fy, fz, fw),
+        ME_noise_grad4(ME_hash_uint4(x0, y1, z0, w0), fx, gy, fz, fw),
+        ME_noise_grad4(ME_hash_uint4(x1, y1, z0, w0), gx, gy, fz, fw),
+        ME_noise_grad4(ME_hash_uint4(x0, y0, z1, w0), fx, fy, gz, fw),
+        ME_noise_grad4(ME_hash_uint4(x1, y0, z1, w0), gx, fy, gz, fw),
+        ME_noise_grad4(ME_hash_uint4(x0, y1, z1, w0), fx, gy, gz, fw),
+        ME_noise_grad4(ME_hash_uint4(x1, y1, z1, w0), gx, gy, gz, fw),
+        ME_noise_grad4(ME_hash_uint4(x0, y0, z0, w1), fx, fy, fz, gw),
+        ME_noise_grad4(ME_hash_uint4(x1, y0, z0, w1), gx, fy, fz, gw),
+        ME_noise_grad4(ME_hash_uint4(x0, y1, z0, w1), fx, gy, fz, gw),
+        ME_noise_grad4(ME_hash_uint4(x1, y1, z0, w1), gx, gy, fz, gw),
+        ME_noise_grad4(ME_hash_uint4(x0, y0, z1, w1), fx, fy, gz, gw),
+        ME_noise_grad4(ME_hash_uint4(x1, y0, z1, w1), gx, fy, gz, gw),
+        ME_noise_grad4(ME_hash_uint4(x0, y1, z1, w1), fx, gy, gz, gw),
+        ME_noise_grad4(ME_hash_uint4(x1, y1, z1, w1), gx, gy, gz, gw),
+        u.x, u.y, u.z, u.w);
+    return isinf(r) ? 0.0 : 0.8344 * r;      // noise_scale4
+}
+
+float ME_noise01_4(float4 p) { return 0.5 * ME_noise_perlin4(p) + 0.5; }
+
+float ME_fractal_noise4(float4 p, float octaves, float roughness)
+{
+    float fscale = 1.0, amp = 1.0, maxamp = 0.0, sum = 0.0;
+    octaves = clamp(octaves, 0.0, 15.0);
+    int n = int(octaves);
+    for (int i = 0; i <= n; i++)
+    {
+        sum += ME_noise01_4(fscale * p) * amp;
+        maxamp += amp;
+        amp *= clamp(roughness, 0.0, 1.0);
+        fscale *= 2.0;
+    }
+    float rmd = octaves - floor(octaves);
+    if (rmd != 0.0)
+    {
+        float sum2 = sum + ME_noise01_4(fscale * p) * amp;
+        return (1.0 - rmd) * (sum / maxamp) + rmd * (sum2 / (maxamp + amp));
+    }
+    return sum / maxamp;
+}
+
+void ME_NoiseTexture4D(float3 co, float w, float scale, float detail,
+                       float roughness, float distortion,
+                       out float value, out float4 color)
+{
+    float4 p = float4(co, w) * scale;
+    if (distortion != 0.0)
+    {
+        p += float4(ME_noise_perlin4(p + ME_random_vec4_offset(0.0)) * distortion,
+                    ME_noise_perlin4(p + ME_random_vec4_offset(1.0)) * distortion,
+                    ME_noise_perlin4(p + ME_random_vec4_offset(2.0)) * distortion,
+                    ME_noise_perlin4(p + ME_random_vec4_offset(3.0)) * distortion);
+    }
+    value = ME_fractal_noise4(p, detail, roughness);
+    color = float4(value,
+                   ME_fractal_noise4(p + ME_random_vec4_offset(4.0), detail, roughness),
+                   ME_fractal_noise4(p + ME_random_vec4_offset(5.0), detail, roughness),
                    1.0);
 }
 

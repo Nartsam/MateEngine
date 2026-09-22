@@ -64,6 +64,9 @@ class FlatNode:
     inputs: dict = field(default_factory=dict)      # ident -> Ref | Const
     input_names: dict = field(default_factory=dict)  # ident -> 可读名，便于调试
     outputs: dict = field(default_factory=dict)      # ident -> 类型
+    # 输出插槽的 default_value。Value / RGB 这类常量节点没有输入，常量存在**输出**
+    # 插槽上，不留下来就读不到。
+    out_defaults: dict = field(default_factory=dict)
     path: str = ""                                   # 组内来源路径，排错用
     # 节点自身那一侧**完全没有连线**的输入插槽。Blender 对部分插槽在「无连线」时
     # 有隐式默认来源（Image Texture 的 Vector 取活动 UV，噪声类取 Generated 坐标），
@@ -269,6 +272,8 @@ class Expander:
                    if k not in ("name", "label", "type", "bl_idname", "mute",
                                 "location", "parent", "inputs", "outputs")},
             outputs={s["identifier"]: s["type"] for s in socket_list(node, "outputs")},
+            out_defaults={s["identifier"]: s.get("default")
+                          for s in socket_list(node, "outputs")},
             path=tree.path,
         )
         # 先登记再解输入，这样自引用会被上面的环检测抓到
