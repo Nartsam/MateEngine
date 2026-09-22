@@ -52,11 +52,37 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/PortableRuntime/build_
 
 `BuildScript.BuildWindows` 和项目菜单 `Build → Build Windows x64` 自动完成此步骤；原生入口源码和构建细节见 `Tools/PortableRuntime/README.md`。
 
+## 制作自用发行包
+
+先按上述方式完成构建并确认成功，再在仓库根目录执行：
+
+```powershell
+$files = @(
+  'Build/MateEngine.exe', 'Build/MateEngine.bat',
+  'Build/UnityPlayer.dll', 'Build/UnityCrashHandler64.exe',
+  'Build/MateEngine_Data', 'Build/MonoBleedingEdge', 'Build/D3D12',
+  'LICENSE.md', 'NOTICE.txt', 'Thirt Party Licenses'
+)
+New-Item -ItemType Directory -Path 'Build/Releases' -Force | Out-Null
+Compress-Archive -LiteralPath $files `
+  -DestinationPath 'Build/Releases/MateEngine-Windows-x64.zip' -Force
+```
+
+这会覆盖同名 ZIP，只包含程序文件和许可说明，不包含个人 `UserData`、模型导出实验、
+测试日志或开发工具。不要把整个 `Build/` 直接压缩。当前包含默认 Zome，按项目约束仅供
+本次个人使用，不可将该包对外分发。
+
+将 ZIP 解压到新的可写目录，直接运行 `MateEngine.exe`；运行不依赖项目、Unity 编辑器、
+Visual Studio 或 PowerShell。更新时复制需要保留的 `UserData/`，自定义模型和 `dance/`
+资源另行迁移。已有模型记录可能使用绝对路径，原路径失效时应从新位置重新导入模型。
+不要只拿新 exe 覆盖旧版本：配套的 `MateEngine_Data`、UnityPlayer 和其他运行库也必须更新。
+
 ## 构建产物位置
 
 | 位置 | 说明 |
 |---|---|
 | `Build/` | 最终可执行文件和运行时数据 |
+| `Build/Releases/` | 按明确文件清单打包的自用 ZIP，不包含个人数据 |
 | `Build/PortableRuntime/` | 原生入口的编译中间文件，不随发行版复制 |
 | `Library/` | 资产导入缓存（项目内，可删除后重建） |
 | `Temp/` | 编译临时文件（编辑器关闭后自动清理） |

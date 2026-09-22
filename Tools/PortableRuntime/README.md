@@ -52,3 +52,4 @@ UnityPlayer、系统目录、用户环境或注册表。其余 Known Folder 查�
 `MateEngine_Data/`、`MonoBleedingEdge/`、`D3D12/` 及需要迁移的 `UserData/`。
 `Build/PortableRuntime/` 和 `Build/PortableAudit/` 属于构建/验证产物，不是发行依赖。
 外部模型引用仍需连同模型文件迁移；默认 Zome 的分发限制见项目规则。
+完整 ZIP 打包命令及更新步骤见 `BUILD_MANUAL.md` 的「制作自用发行包」。

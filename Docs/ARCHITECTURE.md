@@ -59,6 +59,7 @@
 | `Packages/` | Unity Package Manager 清单 |
 | `Tools/PortableRuntime/` | Windows 原生入口源码、编译和 exe 资源复制；启动前重定向 Unity 的 LocalLow 与进程临时目录 |
 | `Build/` | 本地构建产物，已忽略不提交 |
+| `Build/Releases/` | 按 `BUILD_MANUAL.md` 的运行文件清单生成的自用 ZIP，排除个人数据与开发产物 |
 | `UserData/` | 构建产物运行时用户数据根目录 |
 
 ## 启动与持久化流程
