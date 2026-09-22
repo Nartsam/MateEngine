@@ -15,57 +15,36 @@ public static class BuildScript
     public static void BuildWindows()
     {
         PlayerSettings.usePlayerLog = false;
-        EditorApplication.quitting -= CleanupEmptyLegacyDataPath;
-        EditorApplication.quitting += CleanupEmptyLegacyDataPath;
-        CleanupEmptyLegacyDataPath();
 
-        int exitCode = 0;
-
-        try
+        if (!BuildAddressablesContent())
         {
-            if (!BuildAddressablesContent())
-            {
-                exitCode = 1;
-                return;
-            }
-
-            var options = new BuildPlayerOptions
-            {
-                scenes = new[] { LoadingScenePath, MainScenePath },
-                locationPathName = "Build/MateEngine.exe",
-                target = BuildTarget.StandaloneWindows64,
-                options = BuildOptions.None
-            };
-
-            BuildReport report = BuildPipeline.BuildPlayer(options);
-            if (report.summary.result != BuildResult.Succeeded)
-            {
-                exitCode = 1;
-            }
-            else
-            {
-                CreateLaunchBatch();
-            }
+            EditorApplication.Exit(1);
+            return;
         }
-        finally
+
+        var options = new BuildPlayerOptions
         {
-            CleanupEmptyLegacyDataPath();
+            scenes = new[] { LoadingScenePath, MainScenePath },
+            locationPathName = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Build", "MateEngine.exe"),
+            target = BuildTarget.StandaloneWindows64,
+            options = BuildOptions.None
+        };
+
+        BuildReport report = BuildPipeline.BuildPlayer(options);
+        int exitCode = report.summary.result == BuildResult.Succeeded ? 0 : 1;
+        if (exitCode == 0)
+        {
+            if (BuildPortableLauncher(options.locationPathName))
+                CreateLaunchBatch();
+            else
+                exitCode = 1;
         }
 
         if (exitCode != 0)
             EditorApplication.Exit(exitCode);
     }
 
-    /// <summary>
-    /// Creates a <c>MateEngine.bat</c> next to the built executable that launches
-    /// the game with <c>-cache-path=../UserData/Cache/UnityCache</c>.
-    ///
-    /// Unlike <c>boot.config</c> keys, <c>-cache-path</c> IS read by Unity's C++
-    /// engine at startup and redirects the entire native cache system (including
-    /// <c>Caching.defaultCache</c>) to the portable path.  This prevents
-    /// <c>LocalLow\Shinymoon\MateEngineX</c> from ever being created — on either
-    /// startup or exit — without needing a background cleanup process.
-    /// </summary>
+    // Convenience launcher only; the exe itself owns portable startup.
     static void CreateLaunchBatch()
     {
         string projectRoot = Path.GetDirectoryName(Application.dataPath);
@@ -76,7 +55,7 @@ public static class BuildScript
             string content =
                 "@echo off\r\n" +
                 "cd /d \"%~dp0\"\r\n" +
-                "start \"\" \"MateEngine.exe\" -cache-path=../UserData/Cache/UnityCache %*\r\n";
+                "start \"\" \"MateEngine.exe\" %*\r\n";
 
             File.WriteAllText(batPath, content);
             Debug.Log($"[BuildScript] Created launch batch: {batPath}");
@@ -107,8 +86,40 @@ public static class BuildScript
         return true;
     }
 
-    static void CleanupEmptyLegacyDataPath()
+    static bool BuildPortableLauncher(string playerPath)
     {
-        PortablePaths.CleanupEmptyLegacyDataPath(PlayerSettings.companyName, PlayerSettings.productName);
+        string projectRoot = Path.GetDirectoryName(Application.dataPath);
+        string script = Path.Combine(projectRoot, "Tools", "PortableRuntime", "build_launcher.ps1");
+        string player = Path.GetFullPath(playerPath);
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -PlayerPath \"{player}\"",
+                WorkingDirectory = projectRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using (var process = System.Diagnostics.Process.Start(startInfo))
+            {
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                process.WaitForExit();
+                Debug.Log(output.Result);
+                if (process.ExitCode == 0) return true;
+                Debug.LogError("[BuildScript] Portable entry point build failed: " + error.Result);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("[BuildScript] Portable entry point build failed: " + e.Message);
+        }
+
+        // Do not leave a launchable, non-portable Unity bootstrap after failure.
+        if (File.Exists(player)) File.Delete(player);
+        return false;
     }
 }

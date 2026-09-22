@@ -9,7 +9,7 @@
 | ADR-0001 | 2026-06-18 | Steam 移除与绿色便携化基础 | Accepted |
 | ADR-0002 | 2026-06-18 | 自定义构建系统 | Accepted |
 | ADR-0003 | 2026-06-19 | 嵌入并 patch Addressables | Accepted |
-| ADR-0004 | 2026-06-19 | Unity 原生缓存重定向 | Accepted |
+| ADR-0004 | 2026-06-19 | Unity 原生缓存重定向 | Superseded by ADR-0014 |
 | ADR-0005 | 2026-06-19 | 项目内自定义加载场景替代 Unity Splash | Accepted |
 | ADR-0006 | 2026-06-19 | Git 换行与二进制属性策略 | Accepted |
 | ADR-0007 | 2026-06-20 | 设置菜单滚动区域运行时高度适配 | Accepted |
@@ -19,6 +19,7 @@
 | ADR-0011 | 2026-09-10 | 复刻 Blender 渲染预设改走节点图转译，放弃参数拟合 | Accepted |
 | ADR-0012 | 2026-09-22 | 渲染复刻管线是离线工具；bloom 需要改 App 渲染管线 | Accepted |
 | ADR-0013 | 2026-09-22 | 独立命令行模型导出工具，先交付无 bloom 的 `.me` | Accepted |
+| ADR-0014 | 2026-09-22 | LocalLow 原生写入调查与启动前路径重定向 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -62,25 +63,23 @@
 
 背景：
 
-`EditorBuildSettings.asset` 场景列表为空，Unity 命令行 `-buildWindows64Player` 无法找到场景。另外，Unity 原生 Cache 系统需要通过命令行参数在 C++ 层重定向。
+`EditorBuildSettings.asset` 场景列表为空，Unity 命令行 `-buildWindows64Player` 无法找到场景。便携缓存处理见 ADR-0014。
 
 决策：
 
 - 新增 `Assets/Editor/BuildScript.cs`，使用 `BuildPipeline.BuildPlayer` 显式指定场景和输出。
 - 构建前先执行 Addressables content build，防止旧 catalog 混入新 Player。
-- 构建成功后生成 `Build/MateEngine.bat`，以 `-cache-path=../UserData/Cache/UnityCache` 参数启动 exe，并转发用户附加参数（`%*`）。
-- `Build/MateEngine_Data/boot.config` 中的 `cache-path` 行作为文档标记保留（Unity 6 不从 boot.config 读取该键）。
+- 构建成功后生成 `Build/MateEngine.bat`，启动 exe 并转发用户附加参数（`%*`）；直接运行 exe 也受支持。
 
 原因：
 
 - 构建入口不依赖编辑器 Build Settings 场景列表。
-- `-cache-path` 是 Unity C++ 引擎原生支持的**命令行参数**，能在引擎全生命周期重定向默认缓存——这是唯一在 C++ 层全程生效的机制。
 - `.bat` 启动器对用户透明，双击即可启动。
 
 后果：
 
 - 修改主场景路径或输出名称时必须同步更新 `BuildScript.cs`。
-- 推荐用户使用 `MateEngine.bat` 启动；直接双击 exe 的场景由 ADR-0004 兜底覆盖。
+- `.bat` 仅为便利入口，无需通过启动器保证便携。
 
 
 ## ADR-0003: 嵌入并 patch Addressables
@@ -115,38 +114,14 @@
 
 ## ADR-0004: Unity 原生缓存重定向与退出兜底清理
 
-状态：Accepted
+状态：Superseded by ADR-0014（2026-09-22）
 
-背景：
+原实现通过 `MateEngine.bat` 传入 `-cache-path`，并在退出时派生 PowerShell 删除空的
+LocalLow 目录。2026-09-22 的文件系统事件监测证实：携带该参数仍会在启动、退出时创建
+`Shinymoon/MateEngineX`，随后才被清理代码删除。此前“原生参数全程重定向”的结论错误。
 
-前几轮修复已消除所有 C# 层 `Application.persistentDataPath` 访问，但构建产物运行时仍在 `LocalLow\Shinymoon\MateEngineX` 下产生空目录。根因在 Unity C++ 原生引擎：
-
-- **启动时**：C++ 层初始化默认 Cache 系统，在 `{persistentDataPath}/Unity/{Company}_{Product}/` 创建目录树——早于任何 C# 代码。
-- **退出时**：C++ 引擎在 shutdown 阶段访问 `Caching.defaultCache` flush 元数据，重建目录树——晚于所有 C# 钩子（`Application.quitting` 之后）。
-
-关键发现：`cache-path` 是 Unity **命令行参数**（`-cache-path`），不是 `boot.config` 键。Unity 6 不从 boot.config 读取它。
-
-决策（双层防御）：
-
-**第一层 — 主修复**：`BuildScript.CreateLaunchBatch()` 生成 `MateEngine.bat`，以 `-cache-path=../UserData/Cache/UnityCache` 启动。这是 Unity C++ 引擎原生支持的参数，全程将默认缓存重定向到便携路径——启动不创建目录，退出也不创建。
-
-**第二层 — 兜底**：`PortablePaths.SchedulePostExitCleanup()` 在 `Application.quitting` 时派生分离的 PowerShell 后台进程：等待主进程退出（30s 超时）→ 检查目录为空 → 删除目录及空父目录。覆盖用户直接双击 exe（未用 .bat）的场景。
-
-另外保留 `CleanupEmptyLegacyDataPath()` 在 `BeforeSplashScreen`、`AfterSceneLoad`、`Application.quitting` 各节点的调用，以及 `ConfigureUnityCache()` 的 C# 层缓存设置。
-
-原因：
-
-- `-cache-path` 是唯一能在 C++ 引擎层全程重定向默认缓存的机制。
-- 兜底进程处理用户可能直接双击 exe 的边界情况。
-- 后台进程无僵尸风险（脚本路径有限确定，必然退出），无资源泄漏（不持有文件句柄或锁）。
-
-后果：
-
-- 使用 `MateEngine.bat` 启动时，`LocalLow\Shinymoon\MateEngineX` **全程不创建**。
-- 直接双击 exe 时，空目录在退出后 ~1 秒被后台进程删除。
-- 崩溃或被任务管理器终止时，空目录残留到下次启动（由启动清理处理）。
-- Editor 模式不受影响（`#if !UNITY_EDITOR` 守卫）。
-- 如果未来 Unity 版本支持 boot.config 的 `cache-path` 键，已注入的行可直接生效。
+匹配当前 Player 的 Unity 原生符号与反汇编显示 `GetCachingManager` 按需初始化；
+项目自己的 `ConfigureUnityCache()` 会触发该初始化。替代方案及验收见 ADR-0014。
 
 
 ## ADR-0005: 项目内自定义加载场景替代 Unity Splash
@@ -653,3 +628,61 @@ Blender 里看到的那张图。等能在 App 里实际看到再定。
 
 本期不改相机、UI 或 `MEPostCompose`。Filmic 仍在材质末端执行，没有 bloom，半透明在
 显示域混合的差异仍存在。完整的线性合成、bloom 与辉光 alpha 取舍继续按 ADR-0012 后续处理。
+
+## ADR-0014: LocalLow 原生写入调查与启动前路径重定向
+
+状态：Accepted　日期：2026-09-22（用户明确授权正式接入原生入口）
+
+### 已验证事实
+
+- 旧 `-cache-path` 不起重定向作用：原始构建携带该参数运行，FileSystemWatcher 捕捉到
+  启动及正常退出各一次 `LocalLow/Shinymoon/MateEngineX` 创建，之后由旧代码删除。
+- `GetCachingManager` 是按需初始化；`ConfigureUnityCache` 的 `Caching.GetCacheByPath`
+  会先初始化默认缓存，再添加便携缓存。当前本地 Addressables/Localization 和 `.me`
+  都走文件加载，不需要 Unity 缓存。移除该调用及退出清理后，退出时不再重建目录，
+  但启动时仍创建空目录。
+- CDB 使用与本机 `6000.2.6f2` Player 匹配的 PDB，捕捉到启动创建的调用链：
+  `Identifiers.StartSession → CrashReporter.CheckPendingNativeCrash →
+  PlatformNativeCrashReporting.GetCrashReport → winutils.GetInsightsCrashFilePath →
+  GetPersistentDataPathApplicationSpecific`。这是查找上次原生崩溃报告时的副作用。
+- 构建前显式设置 `UnityEditor.EngineDiagnostics.EngineDiagnosticsSettings.enabled = false`
+  仍未阻止上述路径创建。该 API 保证关闭诊断数据收集，不保证关闭原生报告路径检查；
+  见 [Unity 6.2 API 文档](https://docs.unity3d.com/6000.2/Documentation/ScriptReference/EngineDiagnostics.EngineDiagnosticsSettings-enabled.html)。
+  `CrashReportHandler.enableCaptureExceptions` 只控制旧 Cloud Diagnostics 的捕获开关；
+  本机原生代码不在启动路径检查之前读取它。
+
+### 决策与实现
+
+采用 `Tools/PortableRuntime/PortableMain.cpp` 作为同名 Windows 原生 exe 入口，在同一
+进程加载 `UnityPlayer.dll`，将**该模块导入表**的 `SHGetKnownFolderPath` 接到本地处理
+函数，再原样调用 `UnityMain`。仅重定向当前用户的 `FOLDERID_LocalAppDataLow`；其他
+目录查询交还 Windows。返回 `{exeDir}/UserData/Unity`，Unity 自行追加公司/产品目录。
+
+在加载 Unity 前，仅设置本进程的 `TEMP/TMP=UserData/Cache/Temp`，让原生临时文件及
+继承环境的 crash-handler 子进程使用程序内路径；不修改用户/系统环境。不得将原型的
+LocalLow 验证表述为完整的磁盘/注册表审计或真正的原生崩溃转储验收。
+
+构建通过 `build_launcher.ps1` 使用已安装的 MSVC 和 Windows SDK，静态链接 CRT，
+并复制 Unity 原 exe 的全部 Windows 资源，保留图标、版本和 DPI/UAC 清单。命令行与
+项目构建菜单自动安装该入口；如果原生步骤失败，构建失败且删除未完成的 exe。
+发行版无需编译器、PowerShell 或项目源码。构建说明见 `Tools/PortableRuntime/README.md`。
+
+移除 `ConfigureUnityCache`、运行时和构建期空目录清理、退出 PowerShell 进程，以及
+无效的 `Assets/boot.config` 标记；`.bat` 仅保留启动和参数转发。业务路径及只读历史迁移
+保持原有约定。UnityPlayer 磁盘文件、系统目录、用户环境、注册表均不由入口修改。
+
+### 兼容性边界与验证
+
+当前支持 `6000.2.6f2` Windows x64 Mono；使用 PE 导入名，不依赖 Unity 内部函数偏移。
+升级 Unity 时必须重新核实导入接口、启动顺序和路径行为。无法安装重定向时禁止继续
+启动。Unity 编辑器自身不经过该入口，仍按项目规则视为开发环境例外。
+
+原型通过正常退出、强制结束及再次启动的文件事件检查；正式集成后的构建再次通过
+正常退出与强制结束，均成功加载丽塔 `.me`、生成本地头像库，目标 LocalLow 目录
+创建/删除事件为零。资源比对确认 12 项 Windows 资源逐项 SHA-256 一致。
+仅复制发行文件和测试模型到含中文/空格的独立目录、无参数直接启动也已通过：模型路径全部位于该副本，LocalLow 事件为零。
+
+证据保存在忽略目录 `Build/PortableAudit/`：`baseline-flag.json`、`fixed-normal.json`、
+`fixed-nolog.json`、`diagnostics-off.json`、`native-startup.log`、`final-normal.json`、
+`final-force.json`、`final-relocated.json`、`resource-verification.json` 与 `build-final.log`。
+旧外部目录的删除已得到用户明确授权。

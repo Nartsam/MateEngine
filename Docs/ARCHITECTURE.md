@@ -57,17 +57,18 @@
 | `Packages/com.unity.addressables/` | 本地嵌入的 Addressables 包；运行时路径被 patch 为便携缓存 |
 | `ProjectSettings/` | Unity 项目设置 |
 | `Packages/` | Unity Package Manager 清单 |
+| `Tools/PortableRuntime/` | Windows 原生入口源码、编译和 exe 资源复制；启动前重定向 Unity 的 LocalLow 与进程临时目录 |
 | `Build/` | 本地构建产物，已忽略不提交 |
 | `UserData/` | 构建产物运行时用户数据根目录 |
 
 ## 启动与持久化流程
 
-1. Unity 启动运行时；Unity 内置 Splash Screen 已关闭。
+1. `MateEngine.exe` 原生入口先准备 `UserData/Unity` 与 `UserData/Cache/Temp`，仅为当前进程设置 TEMP/TMP，再加载 UnityPlayer、重定向其 LocalLow 查询并调用 `UnityMain`。Unity 内置 Splash Screen 已关闭。
 2. `PortablePaths` 在 `BeforeSplashScreen` 阶段初始化。
 3. Editor 和命令行构建进程使用项目内 `Library/MateEngineUserData/`，避免构建期写入用户目录。
 4. Build 产物默认使用 `{exeDir}/UserData/`。
 5. 如果传入 `--datadir <name>`，则使用 `{exeDir}/UserData/<name>/`。
-5.5. Unity 原生引擎默认在 `{persistentDataPath}/Unity/{Company}_{Product}/` 初始化 Cache 目录（早于 C# 执行）。**主修复**：`Build/MateEngine.bat` 以 `-cache-path=../UserData/Cache/UnityCache` 命令行参数启动——这是 Unity C++ 引擎原生支持的参数，全程将默认缓存重定向到便携路径。**兜底**：`PortablePaths.PostSceneLoadCleanup()` 清理启动残留 + `PortablePaths.SchedulePostExitCleanup()` 后台 PowerShell 进程在主进程退出后清理 exit 残留。`boot.config` 中的 `cache-path` 行仅供文档标记（Unity 6 不从 boot.config 读取该键）。
+5.5. 本地 Addressables 和 `.me` 按文件加载，不初始化 `UnityEngine.Caching`。Unity 原生崩溃报告检查所需目录由原生入口转到 `UserData/Unity/<company>/<product>`；不再清理外部目录或派生退出 PowerShell（ADR-0014）。
 6. Build 产物不再回退到 `Application.persistentDataPath`。如果 `UserData/` 不可写，会记录错误并保持便携目标路径，避免静默写入用户目录。
 7. `Mate Engine Loading.unity` 作为第一个场景显示项目内加载页；`LoadingScreenController` 运行时创建 Canvas UI，并异步加载 `Mate Engine Main.unity`。
 8. Build 产物首次启动时，`PortableMigration` 从旧位置迁移已有数据，并写入 `.migrated` 标记。Windows 旧路径通过 `%USERPROFILE%\AppData\LocalLow\<company>\<product>` 手工计算，只读检查旧数据，避免访问 `Application.persistentDataPath` 本身造成目录创建副作用。
@@ -77,13 +78,13 @@
 12. UI 语言默认使用简体中文：`Localization Settings.asset` 的项目语言与兜底选择器为 `zh`，`SaveLoadHandler.SettingsData.selectedLocaleCode` 新建设置默认 `zh`，命令行 `-language=` 仍可覆盖。
 13. `MenuAudioHandler` 保留菜单打开、关闭、按钮等交互音效，但不再播放启动完成后的 `startupSounds`；相关序列化字段保留用于场景和 Voice Pack 兼容。
 14. 本地 Addressables group 的 `Use Asset Bundle Cache` 已关闭；`BuildScript.BuildWindows` 会先重建 Addressables content，再构建 player，防止旧 catalog 把过时缓存配置打入新 build。
-15. 如果外部历史残留或 Unity 其他路径只创建了空的旧 LocalLow 目录，`BuildScript` 和 `PortablePaths` 会在构建开始、构建结束、编辑器退出前、运行初始化后、正常退出时删除空目录；非空目录一律保留。
+15. 历史 LocalLow 目录仅用于只读迁移，构建和运行都不删除旧数据。Unity 编辑器不经过 Player 的原生入口，其自身缓存和原生路径访问仍是开发环境例外。
 
 ## 核心脚本
 
 | 脚本 | 职责 |
 |---|---|
-| `Assets/Editor/BuildScript.cs` | 先重建 Addressables content，再显式指定主场景构建 Windows x64 |
+| `Assets/Editor/BuildScript.cs` | 重建 Addressables、构建 Windows x64，再编译并安装保留原始 exe 资源的便携原生入口 |
 | `Assets/Editor/PmxPipeline/MEPmxPipeline.cs` | PMX 离线管线 batch/menu 入口；`BuildModel`、`BuildAndExport`、`ExportMe` 通过 CLI 或本机配置取路径 |
 | `Assets/Editor/PmxPipeline/MEModelExportValidation.cs` | 独立导出的 AssetBundle 重载验收：资产格式、网格/形态键、shader 出图与头部方向绑定 |
 | `Assets/Editor/PmxPipeline/PmxPipelineOptions.cs` | PMX 管线路径和参数聚合；优先 CLI，其次 ignored 本机配置 `Library/MateEngineUserData/PmxPipeline/settings.json`，最后项目相对默认输出 |
@@ -139,7 +140,8 @@ Build 产物优先使用 `{exeDir}/UserData/`。Editor 和命令行构建进程�
 | Blendshape | `UserData/Blendshapes/` |
 | 舞蹈同步 | `UserData/Sync/` |
 | 临时缓存 | `UserData/Cache/` |
-| Unity 原生缓存 | `UserData/Cache/UnityCache/` |
+| Unity 原生数据 | `UserData/Unity/<company>/<product>/` |
+| 原生临时文件 | `UserData/Cache/Temp/`（仅当前进程及其子进程的 TEMP/TMP） |
 | Addressables 目录缓存 | `UserData/Cache/com.unity.addressables/` |
 | `.me` 缓存 | `UserData/Cache/ME_Cache/` |
 | AI 历史和 Prompt | `UserData/AI/` |
@@ -157,7 +159,7 @@ Build 产物优先使用 `{exeDir}/UserData/`。Editor 和命令行构建进程�
 - 旧 `PlayerPrefs` 只读迁移，不再调用 `Set*`/`Delete*`/`Save()`。
 - `--datadir`、`--savefile` 和 RAG 存档路径被归一化到 `UserData/` 子路径内。
 - `DiscordManager.registerUriScheme` 默认关闭；当前主场景使用 `DiscordPresence`，不涉及 URI scheme 注册。
-- Unity 编辑器自身可能在 `%LOCALAPPDATA%\Unity\` 等处写入；MateEngine 自身不在构建期写入 `LocalLow\Shinymoon`。
+- Unity 编辑器自身可能写入全局缓存和原生 LocalLow 目录；Player 的原生入口仅作用于发行版运行进程，不修改编辑器或全局设置。
 
 ## Mod 系统
 
@@ -253,9 +255,9 @@ ADR-0010/0011），保留为旧 `.me` 兼容与出图兜底。
 
 - `EditorBuildSettings.asset` 中场景列表可能为空，不能依赖 `-buildWindows64Player`。
 - 命令行构建使用 `-executeMethod BuildScript.BuildWindows`。
-- `BuildScript.BuildWindows` 会先调用 Addressables content build；构建场景顺序为 `Mate Engine Loading.unity` → `Mate Engine Main.unity`。直接使用 `File -> Build Settings -> Build` 时，需要先手动重建 Addressables。
-- 构建输出到 `Build/MateEngine.exe`。
-- 构建同时生成 `Build/MateEngine.bat`，以 `-cache-path=../UserData/Cache/UnityCache` 参数启动——这是推荐的启动方式。
+- `BuildScript.BuildWindows` 会先调用 Addressables content build；构建场景顺序为 `Mate Engine Loading.unity` → `Mate Engine Main.unity`。直接使用 Unity 的普通 Build 按钮时，需要手动重建 Addressables 并在构建后执行原生入口脚本，见 `BUILD_MANUAL.md`。
+- 构建输出到 `Build/MateEngine.exe`；`BuildPortableLauncher` 调用 `Tools/PortableRuntime/build_launcher.ps1` 编译原生入口并保留 Unity exe 的图标、版本和 DPI/UAC 清单。原生步骤失败则删除未完成的 exe 并报告构建失败。
+- 构建同时生成 `Build/MateEngine.bat`，仅启动 exe 并转发参数；直接运行 exe 也可。`-cache-path` 实测无效，已移除。
 - 不需要 Steamworks SDK。
 
 ## 已知陷阱
@@ -268,6 +270,6 @@ ADR-0010/0011），保留为旧 `.me` 兼容与出图兜底。
 - 删除旧字段可能破坏 Unity 场景、Prefab、Inspector 引用或旧 JSON 兼容性。
 - 运行时新增写入如果绕过 `PortablePaths`，会破坏绿色便携目标。
 - 升级 Addressables 时不能直接恢复注册表包；必须复核 `AddressablesImpl`、`ContentCatalogProvider`、`AssetBundleProvider` 是否重新访问 `Application.persistentDataPath` 或重新触发本地 bundle 的 `UnityEngine.Caching`。
-- 升级或重建 Addressables 包后，须确认 `Packages/com.unity.addressables/Runtime/AddressablesPortablePaths.cs` 路径计算与 `PortablePaths` 一致。正确启动方式为 `MateEngine.bat`（`-cache-path` 命令行参数），兜底清理由 `SchedulePostExitCleanup()` 处理。`boot.config` 中的 `cache-path` 行仅供文档标记。
+- 升级 Addressables 后须确认 `AddressablesPortablePaths.cs` 与 `PortablePaths` 一致；不要重新加入无用的默认缓存初始化。升级 Unity 后还须复测原生入口的导入接口、启动时序与无 LocalLow 写入行为，见 ADR-0014。
 - 默认 Avatar 不可随自制 build 分发。
 - `ProjectSettings/Packages/` 当前有两个设置文件被 Git 跟踪（`com.unity.muse.common`、`com.unity.testtools.codecoverage`），且不再整目录忽略；如果 Unity 自动改动这些文件，需确认是否与任务有关，避免无意义提交。

@@ -4,7 +4,7 @@
 
 本文档维护项目的当前进度、任务列表。执行时先完成“正在处理”下堆积的任务，再处理其他项。阶段性进展完成后务必同步更新本进度文档。
 
-- 上次更新：2026-09-22（独立 PMX/Blend 命令行导出工具：材质、描边资产化与头部方向组件已接入；无 bloom `.me` 往返验收通过）
+- 上次更新：2026-09-22（PMX 导出工具已提交；Windows 原生便携入口正式接入，正常退出/强制终止/独立发行目录验证通过）
 
 ## 当前状态
 
@@ -17,7 +17,7 @@
 - Steamworks.NET 包、Steam API/插件/UI 脚本已移除。
 - 新增 `Assets/Editor/BuildScript.cs`（命令行构建）、`Assets/MATE ENGINE - Scripts/Portable/`（便携路径管理）。
 - 新增嵌入包 `Packages/com.unity.addressables/`，修复运行时默认访问 `Application.persistentDataPath`。
-- 新增 `Assets/boot.config` 作为文档标记；`BuildScript.CreateLaunchBatch()` 构建后生成 `MateEngine.bat` 以 `-cache-path` 启动。
+- `Tools/PortableRuntime/` 原生入口已正式接入构建；启动前将 Unity 的 LocalLow 查询和本进程 TEMP/TMP 转到软件目录，移除 `-cache-path`、`Assets/boot.config`、主动缓存初始化和全部退出清理（ADR-0014）。
 - 本地 Addressables group 已关闭 `Use Asset Bundle Cache`。
 - 启动完成后的菜单启动音效已禁用；默认 UI 语言已改为简体中文。
 - Unity 内置 Splash 已关闭；新增项目内加载场景作为首屏。
@@ -157,11 +157,12 @@ Phase 0–3.6 已完成并通过用户肉眼验收。九个角色、正背两视
 - 关闭 `PlayerSettings.usePlayerLog`，构建脚本强制 `usePlayerLog = false`，禁止 Build 产物写入 `Player.log`。
 - Build 产物不因 `UserData/` 不可写而回退到 `Application.persistentDataPath`。
 - 嵌入 `Packages/com.unity.addressables/` 并 patch：移除所有 `Application.persistentDataPath` 访问，本地 bundle 绕过 Unity 默认缓存查询，关闭本地 group `Use Asset Bundle Cache`。构建脚本先重建 Addressables content 再构建 Player。
-- **主修复 — 启动器**：`BuildScript.CreateLaunchBatch()` 生成 `Build/MateEngine.bat`，以 `-cache-path=../UserData/Cache/UnityCache` 参数启动 exe（Unity C++ 引擎原生支持的参数，全程重定向默认缓存）。
-- **兜底 — 退出清理**：`PortablePaths.SchedulePostExitCleanup()` 派生后台 PowerShell 进程，等待主进程退出后清理可能残留的空 `LocalLow\Shinymoon\MateEngineX` 目录。
-- **辅助 — 多点空目录清理**：构建开始/结束、编辑器退出、`BeforeSplashScreen`、`AfterSceneLoad`、`Application.quitting` 各节点删除空旧目录（非空不删）。
-- `Assets/boot.config` 中的 `cache-path` 行作为文档标记保留（Unity 6 是命令行参数，非 boot.config 键）。
-- 所有运行时写入（LLM、DiscordRPC、截图、缓存等）收敛到 `UserData/`；`--datadir` 等参数限制在 `UserData/` 子路径内；旧 `PlayerPrefs` 只读迁移。
+- 2026-09-22 基线监测证实：携带旧 `-cache-path` 参数仍在启动和退出时创建 LocalLow 目录，之后才被清理；旧“全程重定向”结论已撤回。
+- 用户确认采用 Windows 原生入口：`Tools/PortableRuntime/PortableMain.cpp` 在同一进程内、`UnityMain` 之前重定向 UnityPlayer 的 LocalLow 查询到 `UserData/Unity`；仅为当前进程设置 `TEMP/TMP=UserData/Cache/Temp`。
+- `BuildScript.BuildWindows` 自动使用本机 MSVC/Windows SDK 编译入口并保留原 Unity exe 的 12 项 Windows 资源（图标、版本、DPI/UAC 清单）；发行版无需这些构建工具。入口安装失败则构建失败，不留下可运行的原始 Unity exe。
+- 已移除 `ConfigureUnityCache()`、所有空目录清理、退出 PowerShell、无效 `Assets/boot.config`；`.bat` 仅为便利启动方式，直接 exe、自启等无需额外缓存参数。
+- 正式构建正常退出、强制终止，以及只复制发行文件到含中文/空格目录后无参数启动均通过；模型实际加载且 LocalLow 目标目录全程零创建/删除事件。不会把旧清理掩盖的“退出后不存在”当成不创建。
+- 业务代码的数据写入（LLM、DiscordRPC、截图等）收敛到 `UserData/`；`--datadir` 等参数限制在 `UserData/` 子路径内；旧 `PlayerPrefs` 只读迁移。Unity 原生路径的残留问题见 ADR-0014。
 
 ### 启动体验与默认语言
 
@@ -211,7 +212,7 @@ Phase 0–3.6 已完成并通过用户肉眼验收。九个角色、正背两视
 | 当前变更尚未提交 | 已处理 | 任务变更完成后提交 |
 | 默认 Avatar 分发风险 | 持续关注 | Zome 不可随自制 build 分发 |
 | Unity 版本敏感 | 持续关注 | 必须使用 `6000.2.6f2` |
-| 外部写入审计 | 静态已完成，待运行复核 | 需运行构建产物后确认磁盘和注册表实际行为 |
+| 外部写入审计 | LocalLow 修复已验收 | 正式 Windows 入口通过启动/正常退出/强制结束/独立目录测试；全盘、注册表和原生崩溃转储尚未完整审计，见 ADR-0014 |
 | 开机自启动写注册表 | 已知例外 | 用户主动启用/关闭时写入或删除 `HKCU\...\Run` |
 | 多实例启动器可执行文件名 | 待修复 | `BuildScript` 输出 `MateEngine.exe`，但 `LaunchMateEngineInstance.cs` 默认值与主/Update 场景序列化值仍为 `MateEngineX.exe`；若使用多实例按钮会找错 exe |
 | 被跟踪的恢复/备份/样例产物 | 待确认 | `Assets/_Recovery/0.unity`、`UMotionData/AutoBackups/`、`ExportedMods/*.me`、`AssetBundles/`、`Sync/dance_sync.json` 等当前被 Git 跟踪；是否清理需逐项确认用途，避免误删上游样例或有效测试资源 |
@@ -247,6 +248,7 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 
 | 日期 | 验证项 | 结果 | 备注 |
 |---|---|---|---|
+| 2026-09-22 | Windows 原生便携入口 | 正式构建与运行通过 | CDB 定位原生崩溃报告启动检查，旧 `-cache-path` 与 Diagnostics 开关不能阻止路径创建；新入口重定向 LocalLow 和进程 TEMP/TMP，移除全部外部清理。正式构建正常退出、强制结束、含中文/空格的独立发行目录无参数运行全程零目标目录事件；模型加载成功；12 项 exe 资源哈希一致。证据 `Build/PortableAudit/`，含 `build-final.log` 与 `final-*.json`；临时进程及测试副本已清理。未作全盘/注册表或真实原生崩溃转储验收 |
 | 2026-09-22 | 无 bloom 导出模型的 App 导入 | Windows Mono 构建及实际加载通过 | `BuildScript.BuildWindows` 成功；新版 App 使用独立 `--datadir PmxExportSmoke` 自动加载丽塔 `.me`，角色库生成对应记录，无模型加载或着色器错误。保留 `Build/PmxExport/app-build.log`、`app-smoke.log` 与导入记录；测试进程和独立数据目录已清理。主场景仍输出历史 Steam/Upload 缺脚本警告，未在本任务中改场景；完整动画/透明窗口观感仍需人工验收 |
 | 2026-09-22 | 独立 PMX/Blend → `.me` 工具 | 两角色导出与 bundle 往返验收通过 | 丽塔、寻梦者：材质/贴图色彩空间/网格/形态键一致；256² RGBA 平均误差 0/255；头骨引用、转头更新和共享材质隔离通过。寻梦者未使用的失效 `hair` 材质正确跳过。CLI 拒绝仓库外输出与缺失输入；无 bloom，App 验证另记 |
 | 2026-09-22 | 接手文档与实现核验 | 静态核验完成 | 核对主线入口、`GradeEnabled = false` 与九角色正背共 18 份已有差分 JSON；修正架构文档的调色启用表述、App 合成验收边界和色差摘要。转译材质/描边仍仅在对照渲染时装配，正式 `.me` 与 App 集成待 Phase 4。本次未运行 Unity 构建或 App |
@@ -258,8 +260,8 @@ Content 仅有一个 RectTransform 子元素 MenuPanel（60px）。其下 **"Mai
 | 2026-06-22 | 右键径向菜单按钮位置与角色底部裁切余量 | 静态验证完成，待 Unity 运行复核 | 主场景 Buttons[0]/[4] 交换 Settings/Chat 引用；Model 根节点 y -0.8 -> -0.74；未改窗口尺寸、相机参数或按钮事件。 |
 | 2026-06-18 | Steam 依赖移除后构建 | 已通过 | 零编译错误 |
 | 2026-06-18 | 外部写入静态审计 | 已完成 | 剩余命中为编辑器/移动端路径、旧数据只读迁移或用户主动功能 |
-| 2026-06-19 | 便携化代码改造 | 代码完成，待运行验证 | 含 Player.log、Addressables patch、cache-path 重定向、PowerShell 兜底清理 |
-| 2026-06-19 | LocalLow 空目录排查（多轮迭代） | 代码完成，待构建/运行复核 | 逐层定位到 Unity C++ 原生引擎 Cache 初始化 → 修复：`-cache-path` 命令行参数（主）+ 后台 PowerShell 清理（兜底） |
+| 2026-06-19 | 便携化代码改造 | 旧实现，部分已被替代 | Player.log 关闭与 Addressables patch 保留；缓存参数和 PowerShell 方案的错误结论已撤回，见 ADR-0014 |
+| 2026-06-19 | LocalLow 空目录排查（多轮迭代） | 旧结论已撤回 | 当时未充分验证创建时机，误将 `-cache-path` 当成原生重定向；2026-09-22 的事件监测与原生调用栈定位见 ADR-0014 |
 | 2026-06-19 | 启动音效禁用与默认简中 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity 构建 |
 | 2026-06-19 | 自定义加载场景替代 Unity Splash | 静态验证完成，待 Unity 运行复核 | Unity Splash 已关闭；Build 场景顺序为 Loading -> Main |
 | 2026-06-19 | 右键径向菜单固定与 Chibi 功能屏蔽 | 静态验证完成，待 Unity 运行复核 | `git diff --check` 无空白错误；未运行 Unity Play Mode |

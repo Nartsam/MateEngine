@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Text;
 using UnityEngine;
 
 public static class PortablePaths
@@ -31,14 +30,6 @@ public static class PortablePaths
     {
         EnsureInitialized();
     }
-
-#if !UNITY_EDITOR
-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-    static void PostSceneLoadCleanup()
-    {
-        CleanupEmptyLegacyDataPath();
-    }
-#endif
 
     public static void EnsureInitialized()
     {
@@ -73,11 +64,9 @@ public static class PortablePaths
         EnsureDirectories();
 
 #if !UNITY_EDITOR
-        ConfigureUnityCache();
-
-        Application.quitting += OnApplicationQuitting;
+        // Local bundles do not need Unity's cache. Native persistence paths are
+        // redirected before UnityMain by Tools/PortableRuntime/PortableMain.cpp.
         PortableMigration.MigrateIfNeeded();
-        CleanupEmptyLegacyDataPath();
 #endif
 
         Debug.Log($"[PortablePaths] UserDataRoot = {userDataRoot}");
@@ -115,111 +104,6 @@ public static class PortablePaths
             "LocalLow",
             companyName,
             productName);
-    }
-
-#if !UNITY_EDITOR
-    static void OnApplicationQuitting()
-    {
-        // Run inline cleanup first — catches directories that are already empty.
-        CleanupEmptyLegacyDataPath();
-
-        // Schedule a detached background process that waits for THIS process
-        // to exit, then removes any empty directory Unity's native shutdown
-        // may recreate after all C# hooks have returned.
-        SchedulePostExitCleanup();
-    }
-
-    /// <summary>
-    /// Spawns a detached PowerShell process that monitors our PID.
-    /// After we exit and Unity's C++ shutdown recreates the empty
-    /// <c>LocalLow\Shinymoon\MateEngineX</c> directory, this process
-    /// deletes it (and its empty parent directory) for a clean portable exit.
-    /// </summary>
-    static void SchedulePostExitCleanup()
-    {
-#if UNITY_STANDALONE_WIN
-        try
-        {
-            string legacy = GetWindowsLegacyDataPath(Application.companyName, Application.productName);
-            if (string.IsNullOrEmpty(legacy)) return;
-
-            int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
-
-            // Build a one-liner PowerShell script and base64-encode it
-            // to avoid shell-escaping issues with quotes, backslashes, etc.
-            string psScript =
-                $"$d='{legacy.Replace("'", "''")}';" +
-                $"try{{$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue;if($p){{$exited=$p.WaitForExit(30000)}}else{{$exited=$true}}}}catch{{$exited=$true}};" +
-                "if($exited){" +
-                  "Start-Sleep -Milliseconds 500;" +
-                  "if(Test-Path $d){" +
-                    "$empty=$true;" +
-                    "try{$c=@(Get-ChildItem $d -Force -ErrorAction SilentlyContinue).Count;if($c -gt 0){$empty=$false}}catch{};" +
-                    "if($empty){" +
-                      "Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue;" +
-                      "$parent=Split-Path $d -Parent;" +
-                      "if($parent -and (Test-Path $parent)){" +
-                        "$pEmpty=$true;" +
-                        "try{$pc=@(Get-ChildItem $parent -Force -ErrorAction SilentlyContinue).Count;if($pc -gt 0){$pEmpty=$false}}catch{};" +
-                        "if($pEmpty){Remove-Item $parent -Force -ErrorAction SilentlyContinue}" +
-                      "}" +
-                    "}" +
-                  "}" +
-                "}";
-
-            string base64Script = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(psScript));
-
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -WindowStyle Hidden -EncodedCommand {base64Script}",
-                CreateNoWindow = true,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
-                UseShellExecute = false
-            };
-            System.Diagnostics.Process.Start(psi);
-
-            Debug.Log($"[PortablePaths] Scheduled post-exit cleanup for: {legacy}");
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[PortablePaths] Failed to schedule post-exit cleanup: {e.Message}");
-        }
-#endif
-    }
-#endif
-
-    public static void CleanupEmptyLegacyDataPath()
-    {
-        CleanupEmptyLegacyDataPath(Application.companyName, Application.productName);
-    }
-
-    public static void CleanupEmptyLegacyDataPath(string companyName, string productName)
-    {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-        string legacy = GetWindowsLegacyDataPath(companyName, productName);
-        if (string.IsNullOrEmpty(legacy)) return;
-
-        DeleteDirectoryIfEmpty(legacy);
-        DeleteDirectoryIfEmpty(Path.GetDirectoryName(legacy));
-#endif
-    }
-
-    static void DeleteDirectoryIfEmpty(string path)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
-            foreach (string _ in Directory.EnumerateFileSystemEntries(path))
-                return;
-
-            Directory.Delete(path, false);
-            Debug.Log($"[PortablePaths] Removed empty legacy directory: {path}");
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[PortablePaths] Failed to remove empty legacy directory '{path}': {e.Message}");
-        }
     }
 
     static string SanitizeDataDirName(string value)
@@ -271,32 +155,4 @@ public static class PortablePaths
         }
     }
 
-#if !UNITY_EDITOR
-    static void ConfigureUnityCache()
-    {
-        try
-        {
-            string cachePath = Path.Combine(userDataRoot, "Cache", "UnityCache");
-            Directory.CreateDirectory(cachePath);
-
-            var existingCache = Caching.GetCacheByPath(cachePath);
-            if (!existingCache.valid)
-            {
-                Cache newCache = Caching.AddCache(cachePath);
-                if (newCache.valid)
-                    Caching.currentCacheForWriting = newCache;
-            }
-            else
-            {
-                Caching.currentCacheForWriting = existingCache;
-            }
-
-            Debug.Log($"[PortablePaths] Unity Cache configured at: {cachePath}");
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[PortablePaths] Failed to configure Unity Cache: {e.Message}");
-        }
-    }
-#endif
 }
