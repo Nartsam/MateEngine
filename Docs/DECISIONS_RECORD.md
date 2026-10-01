@@ -280,7 +280,7 @@ Unity 的 VerticalLayoutGroup（VLG）和 ContentSizeFitter（CSF）**完全不�
 后果：
 
 - 当前 PMX 生产路径是 Editor 离线导入 → UTS2/lilToon + DynamicBone → `.me`。VRM 加载仍是项目原有能力，但 PMX→VRM 导出不再使用。
-- 物理、碰撞体和材质映射都是有损近似，需要逐模型验收。M4 踩坑表保留在 `PROGRESS.md`，用于避免重复踩坑。
+- 物理、碰撞体和材质映射都是有损近似，需要逐模型验收。几何与物理的踩坑记录见 `PROGRESS.md`「PMX 几何与物理踩坑表」；原 M4 表中的 UTS2 材质部分已作废，原表见 `3788b59c^:PROGRESS.md`。
 - `.me` AssetBundle 打包必须复核脚本排除、shader 变体和依赖收集。导出文件名、输出路径和临时目录都必须走 `PmxPipelineOptions`。
 
 相关文件：
@@ -317,7 +317,7 @@ ADR-0008 记录过一个备选方案：通用 VRM + App 内置可切换 RenderSt
 - `PmxMaterialMapper` 的 clean-baseline 修复（matcap 禁用、rim 范围限定、render queue 排序、退化颜色守卫）
 - `PmxPhysics` 的 DynamicBone 参数调优
 - `PmxPipelineOptions.HasExtension()` 扩展名守卫（防止 .vrm exportPath 劫持 .me 输出）
-- UTS2 踩坑表（已移至 `PROGRESS.md` M4 节）
+- UTS2 踩坑表（曾移至 `PROGRESS.md` M4 节；2026-09-22 该表拆分，UTS2 部分作废，原表见 `3788b59c^:PROGRESS.md`）
 
 ### 教训
 
