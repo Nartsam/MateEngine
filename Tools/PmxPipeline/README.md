@@ -60,9 +60,12 @@ Python 使用仓库内 `Build/.venv`。
 
 输出为 App 已支持的**原始 AssetBundle 格式 `.me`**。在角色库的模型导入入口选择该文件。
 包含原始日文 BlendShape、现有 DynamicBone 物理近似、转译材质和描边。
-**本工具不接入 bloom**，Filmic 视图变换在材质内执行；半透明混合与线性合成仍有已知差异。
+**模型文件不携带屏幕空间 bloom**。支持 `MEModelBloom` 的新版 App 会在线性 HDR 上混合，
+再执行 Bloom/Filmic；沿用设置面板已有的 Bloom 开关并保留其状态，alpha 不外扩。
+旧 App 或独立材质预览仍由材质执行 Filmic，半透明在显示域混合的差异仍存在。
 
-导出模型带 `MEModelDirections` 组件，跟随头骨更新脸部 SDF 朝向，日光保持预设的世界方向。
+导出模型带 `MEModelDirections` 组件，跟随头骨的左右转向更新脸部 SDF 朝向（低头/抬头不影响脸部阴影，见 ADR-0015）；日光方向随模型根节点旋转，
+保持预设中日光相对角色的关系（App 的模型父节点绕 Y 转了 180°）。
 **App 需要使用包含此组件的新版构建**；AssetBundle 不携带 C# 实现，旧 exe 无法执行它。
 
 中间产物按 PMX/预设路径组合隔离，键为路径哈希：
@@ -178,6 +181,8 @@ Build/.venv/Scripts/python.exe -m pip install numpy pillow
 |---|---|
 | `Assets/Editor/PmxPipeline/MEModelExportValidation.cs` | 重新加载实际 bundle，检查网格/形态键、材质、贴图色彩空间、出图与头部方向更新 |
 | `Assets/PmxTranspileRuntime/MEModelDirections.cs` | 按头骨更新脸部 SDF 方向，通过 PropertyBlock 隔离各模型实例 |
+| `Assets/PmxTranspileRuntime/MEModelBloom.cs` | App 转译模型的 HDR/Bloom/Filmic 接入，保留主相机与 UI 引用、原 alpha 和已有 Bloom 开关；写回时补模型深度，输出预乘颜色 |
+| `Assets/Editor/PmxPipeline/MEModelBloomValidation.cs` | 实际 bundle 的主相机合成与参考合成对照，并验证边缘相对旧路径的误差改善、辅助物体遮挡、UI、alpha、开关、尺寸变化、模型卸载和主场景自动接入 |
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成、出对照图与材质 ID 通道 |
 | `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读 `bindings.json`，建 LUT 贴图与各贴图，按材质名替换槽位 |
 | `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
@@ -186,6 +191,22 @@ Build/.venv/Scripts/python.exe -m pip install numpy pillow
 | `Assets/Generated/PmxTranspiled/<角色>/` | 转译产物（已忽略，一条命令可重建） |
 
 ## 改动时必须知道的事
+
+App 合成的独立验收（关闭本项目的 Unity 编辑器，必须启用图形设备，不能带 `-nographics`）：
+
+```powershell
+& "<Unity 6000.2.6f2 的安装目录>/Editor/Unity.exe" -batchmode -quit `
+    -projectPath "$PWD" -executeMethod MateEngine.PmxPipeline.MEModelBloomValidation.Run `
+    -bloomModel "$PWD/Build/PmxModels/特工丽塔_transpiled.me" `
+    -logFile "$PWD/Build/BloomValidation/validation.log"
+```
+
+输出在 `Build/BloomValidation/`，包括数值报告、Bloom 开关对比、相机空间 UI、窗口遮挡与辅助物体
+遮挡（抬起左臂后的绿色前后景）、模型父节点旋转 180° 后的画面（应与原画面一致），核验低头 30° 时脸部朝向不变、左右转 30° 时随之转动，并记录关 Bloom
+时边缘对旧路径的误差，以及 20 帧同步渲染
+（含单像素回读开销）的 Bloom 开关耗时。
+此检查使用 512² / 4× MSAA，同采样比较主程序接入与离线合成；不等于 Blender 差分中
+每轴 4× 超采样的九角色成绩，也不替代正式主场景的窗口与交互验收。
 
 - **改了导出器就必须重跑导出。** 导出器每扩一个字段，旧 JSON 就会缺字段而**静默**退化
   （漏 LUT 表、漏插值方式、漏输出插槽默认值各坑过一次）。`transpile.py` 现在硬卡

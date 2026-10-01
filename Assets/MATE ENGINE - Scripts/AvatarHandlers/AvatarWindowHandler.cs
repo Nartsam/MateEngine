@@ -756,7 +756,7 @@ public class AvatarWindowHandler : MonoBehaviour
     {
         if (occluderRoot != null) return;
         var root = new GameObject("OccluderRoot");
-        root.layer = targetCamera != null ? targetCamera.gameObject.layer : 0;
+        root.layer = LayerMask.NameToLayer("WindowOcclusion");
         root.transform.SetParent(targetCamera != null ? targetCamera.transform : null, false);
         occluderRoot = root.transform;
     }
@@ -764,7 +764,7 @@ public class AvatarWindowHandler : MonoBehaviour
     {
         if (targetQuadGO != null) return;
         targetQuadGO = new GameObject("TargetWindowQuad");
-        targetQuadGO.layer = targetCamera.gameObject.layer;
+        targetQuadGO.layer = LayerMask.NameToLayer("WindowOcclusion");
         targetQuadGO.transform.SetParent(occluderRoot, false);
         var mf = targetQuadGO.AddComponent<MeshFilter>();
         var mr = targetQuadGO.AddComponent<MeshRenderer>();
@@ -781,7 +781,7 @@ public class AvatarWindowHandler : MonoBehaviour
         while (otherQuadGOs.Count <= index)
         {
             var go = new GameObject("OtherWindowQuad_" + otherQuadGOs.Count);
-            go.layer = targetCamera.gameObject.layer;
+            go.layer = LayerMask.NameToLayer("WindowOcclusion");
             go.transform.SetParent(occluderRoot, false);
             var mf = go.AddComponent<MeshFilter>();
             var mr = go.AddComponent<MeshRenderer>();

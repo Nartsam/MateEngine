@@ -156,7 +156,7 @@ public class SettingsHandlerToggles : MonoBehaviour
 
 
         // Visuals
-        if (bloomObject != null) bloomObject.SetActive(data.bloom);
+        MateEngine.PmxPipeline.MEModelBloom.ApplySetting(bloomObject, data.bloom);
         if (dayNightObject != null) dayNightObject.SetActive(data.dayNight);
         if (ambientOcclusionObject != null) ambientOcclusionObject.SetActive(data.ambientOcclusion);
 

@@ -14,6 +14,7 @@ Shader "Hidden/MateEngine/PostCompose"
     Properties
     {
         _MainTex ("Source", 2D) = "black" {}
+        [HideInInspector] _MEDepthCull ("Depth cull", Float) = 0
     }
 
     CGINCLUDE
@@ -134,6 +135,7 @@ Shader "Hidden/MateEngine/PostCompose"
 
             sampler2D _MELut;
             float4 _ViewTransform;   // x=行号 y=总行数 z=lo w=hi
+            float  _MEPremultipliedOutput;   // 1 = 输出给按预乘 alpha 合成的桌面窗口
 
             float ME_VT(float x)
             {
@@ -151,7 +153,62 @@ Shader "Hidden/MateEngine/PostCompose"
                 float3 bloom = max(tex2D(_BloomTex, i.uv).rgb, 0.0) * _BloomColor.rgb;
                 if (_BloomClamp > 0.0) bloom = min(bloom, _BloomClamp);
                 float3 lin = max(src.rgb + bloom, 0.0);
+                if (_MEPremultipliedOutput > 0.5)
+                {
+                    // HDR 缓冲在 MSAA 边缘与 BLEND 材质处是预乘值。视图变换是非线性的，直接作用
+                    // 在预乘值上会让高亮边缘偏亮，边缘辉光也不随覆盖率衰减。先还原再乘回，
+                    // 边缘即与材质内做视图变换的旧路径一致；alpha=0 处的辉光按原 alpha 策略丢弃。
+                    if (src.a <= 0.0) return 0.0;
+                    lin /= src.a;
+                    return float4(float3(ME_VT(lin.r), ME_VT(lin.g), ME_VT(lin.b)) * src.a, src.a);
+                }
                 return float4(ME_VT(lin.r), ME_VT(lin.g), ME_VT(lin.b), src.a);
+            }
+            ENDCG
+        }
+        // 4: 写回主相机。alpha=0 的辉光不能留在目标 RGB 中，否则随后绘制的半透明 UI
+        // 会把原本不可见的颜色混进菜单；离线差分仍使用上面的完整 RGB 合成 pass。
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert_blit
+            #pragma fragment frag
+            float4 frag(v2f_blit i) : SV_Target
+            {
+                float4 c = tex2D(_MainTex, i.uv);
+                return c.a > 0.0 ? c : 0.0;
+            }
+            ENDCG
+        }
+        // 5: 给主相机补模型深度，只写深度。按合成结果的覆盖率裁剪：覆盖不到一半的像素
+        // 不写，alpha 裁掉的发梢、镂空处和窗口遮挡掉的部分不会误挡后面的辅助物体。
+        Pass
+        {
+            Cull [_MEDepthCull]
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+
+            CGPROGRAM
+            #pragma vertex vert_depth
+            #pragma fragment frag_depth
+
+            sampler2D _MEModelMask;
+
+            struct v2f_depth { float4 pos : SV_POSITION; float4 screen : TEXCOORD0; };
+
+            v2f_depth vert_depth(float4 vertex : POSITION)
+            {
+                v2f_depth o;
+                o.pos = UnityObjectToClipPos(vertex);
+                o.screen = ComputeScreenPos(o.pos);
+                return o;
+            }
+
+            float4 frag_depth(v2f_depth i) : SV_Target
+            {
+                clip(tex2D(_MEModelMask, i.screen.xy / i.screen.w).a - 0.5);
+                return 0.0;
             }
             ENDCG
         }

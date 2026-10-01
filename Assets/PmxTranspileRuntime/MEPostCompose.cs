@@ -9,7 +9,9 @@
 // 发光强度 10）：Blender 的辉光能量 / 过阈值后的源能量 = 0.5289，而 intensity 只有
 // 0.08 —— 放大约 6.6 倍，与 8 级累加的量级吻合。所以这里留一个可标定的 Gain。
 using System;
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace MateEngine.PmxPipeline
 {
@@ -36,7 +38,7 @@ namespace MateEngine.PmxPipeline
         };
     }
 
-    public static class MEPostCompose
+    public sealed class MEPostCompose : IDisposable
     {
         public const string ShaderName = "Hidden/MateEngine/PostCompose";
         private const int MaxIterations = 16;
@@ -62,21 +64,99 @@ namespace MateEngine.PmxPipeline
         private static readonly int SampleScale = Shader.PropertyToID("_SampleScale");
         private static readonly int LutTex = Shader.PropertyToID("_MELut");
         private static readonly int ViewTransform = Shader.PropertyToID("_ViewTransform");
+        private static readonly int PremultipliedFlag = Shader.PropertyToID("_MEPremultipliedOutput");
+        private static readonly int ModelMask = Shader.PropertyToID("_MEModelMask");
+        private static readonly int DepthCull = Shader.PropertyToID("_MEDepthCull");
+        private static readonly int MaterialCull = Shader.PropertyToID("_Cull");
+
+        private readonly Material material;
+        private readonly Dictionary<int, Material> depthMaterials = new();
+        private readonly RenderTexture[] pyramid = new RenderTexture[MaxIterations];
+
+        /// <summary>
+        /// 输出给按预乘 alpha 合成的桌面窗口：视图变换前先还原未预乘颜色，再乘回覆盖率。
+        /// 离线差分保持 false，沿用与 Blender 基准对照过的原公式。
+        /// </summary>
+        public bool PremultipliedOutput { get; set; }
+
+        public MEPostCompose()
+        {
+            var shader = Shader.Find(ShaderName);
+            if (shader == null || !shader.isSupported)
+                throw new InvalidOperationException($"找不到可用着色器 {ShaderName}");
+            material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+        }
+
+        public void Dispose()
+        {
+            ReleaseObject(material);
+            foreach (var depth in depthMaterials.Values) ReleaseObject(depth);
+            depthMaterials.Clear();
+        }
+
+        /// <summary>
+        /// 录制写回主相机的命令：先按合成结果的覆盖率给模型补深度，再写入合成颜色。
+        /// 合成图本身不带深度，之后由主相机绘制的光环、拖尾、粒子等要靠这份深度被模型遮挡。
+        /// </summary>
+        public void Present(CommandBuffer commands, RenderTexture source, Renderer[] depthRenderers)
+        {
+            // 放在颜色 Blit 之前：此时主相机的视图/投影矩阵仍然有效，DrawRenderer 直接可用。
+            commands.SetGlobalTexture(ModelMask, source);
+            foreach (var renderer in depthRenderers)
+            {
+                if (renderer == null) continue;
+                Mesh mesh = null;
+                if (renderer is SkinnedMeshRenderer skinned) mesh = skinned.sharedMesh;
+                else if (renderer.TryGetComponent(out MeshFilter filter)) mesh = filter.sharedMesh;
+                if (mesh == null || mesh.subMeshCount == 0) continue;
+                var slots = renderer.sharedMaterials;
+                for (int i = 0; i < slots.Length; i++)
+                {
+                    // 剔除方式随原材质：反向描边外壳和单面布料不能在深度里双面生效。
+                    int cull = slots[i] != null && slots[i].HasProperty(MaterialCull)
+                        ? Mathf.RoundToInt(slots[i].GetFloat(MaterialCull)) : (int)CullMode.Back;
+                    commands.DrawRenderer(renderer, DepthMaterial(cull), Mathf.Min(i, mesh.subMeshCount - 1), 5);
+                }
+            }
+            commands.Blit(source, BuiltinRenderTextureType.CameraTarget, material, 4);
+        }
+
+        private Material DepthMaterial(int cull)
+        {
+            if (depthMaterials.TryGetValue(cull, out var depth)) return depth;
+            depth = new Material(material.shader) { hideFlags = HideFlags.HideAndDontSave };
+            depth.SetFloat(DepthCull, cull);
+            depthMaterials.Add(cull, depth);
+            return depth;
+        }
+
+        private static void ReleaseObject(UnityEngine.Object value)
+        {
+            if (Application.isPlaying) UnityEngine.Object.Destroy(value);
+            else UnityEngine.Object.DestroyImmediate(value);
+        }
 
         /// <summary>
         /// 把线性 HDR 缓冲合成到目标（通常是 sRGB 读写的 ARGB32）。
-        /// lut 为 null 时跳过视图变换（只有在对照 UTS2 兜底材质时才会这样）。
+        /// 离线调用保留一次性入口；Player 持有实例复用材质，避免每帧创建/销毁 Unity 对象。
         /// </summary>
         public static void Compose(RenderTexture source, RenderTexture dest,
                                    MEBloomSettings bloom, Texture lut,
                                    int lutRow, int lutRows, float lo, float hi,
                                    Action<string> log = null)
         {
-            var shader = Shader.Find(ShaderName);
-            if (shader == null)
-                throw new InvalidOperationException($"找不到着色器 {ShaderName}");
-            var mat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-            var pyramid = new RenderTexture[MaxIterations];
+            using var compose = new MEPostCompose();
+            compose.Render(source, dest, bloom, lut, lutRow, lutRows, lo, hi, log);
+        }
+
+        public void Render(RenderTexture source, RenderTexture dest,
+                           MEBloomSettings bloom, Texture lut,
+                           int lutRow, int lutRows, float lo, float hi,
+                           Action<string> log = null)
+        {
+            if (lut == null) throw new InvalidOperationException("Compose 需要视图变换 LUT");
+            var mat = material;
+            var previousTarget = RenderTexture.active;
             RenderTexture blit = null;
 
             try
@@ -97,18 +177,9 @@ namespace MateEngine.PmxPipeline
                     bloom.color.b * bloom.intensity * gain, 1f));
                 mat.SetFloat(BloomClamp, bloom.clamp);
 
-                if (lut != null)
-                {
-                    mat.SetTexture(LutTex, lut);
-                    mat.SetVector(ViewTransform, new Vector4(lutRow, lutRows, lo, hi));
-                }
-                else
-                {
-                    // 没有 LUT 就用一条恒等曲线：把 lo/hi 设成让 ME_VT 退化为直通是
-                    // 做不到的（它是对数域查表），所以这里换成直接 Blit 第 3 号 pass
-                    // 之外的路径——交给调用方保证只在有 LUT 时走合成。
-                    throw new InvalidOperationException("Compose 需要视图变换 LUT");
-                }
+                mat.SetTexture(LutTex, lut);
+                mat.SetVector(ViewTransform, new Vector4(lutRow, lutRows, lo, hi));
+                mat.SetFloat(PremultipliedFlag, PremultipliedOutput ? 1f : 0f);
 
                 log?.Invoke($"合成：bloom={(bloom.enabled ? $"开（{levels} 级，强度 {bloom.intensity:F3}）" : "关")}" +
                             $" 视图变换行={lutRow}/{lutRows}");
@@ -116,10 +187,13 @@ namespace MateEngine.PmxPipeline
             }
             finally
             {
+                RenderTexture.active = previousTarget;
                 if (blit != null) RenderTexture.ReleaseTemporary(blit);
-                foreach (var rt in pyramid)
-                    if (rt != null) RenderTexture.ReleaseTemporary(rt);
-                UnityEngine.Object.DestroyImmediate(mat);
+                for (int i = 0; i < pyramid.Length; i++)
+                {
+                    if (pyramid[i] != null) RenderTexture.ReleaseTemporary(pyramid[i]);
+                    pyramid[i] = null;
+                }
             }
         }
 

@@ -20,6 +20,7 @@
 | ADR-0012 | 2026-09-22 | 渲染复刻管线是离线工具；bloom 需要改 App 渲染管线 | Accepted |
 | ADR-0013 | 2026-09-22 | 独立命令行模型导出工具，先交付无 bloom 的 `.me` | Accepted |
 | ADR-0014 | 2026-09-22 | LocalLow 原生写入调查与启动前路径重定向 | Accepted |
+| ADR-0015 | 2026-09-23 | 主程序仅为转译 PMX 启用 Bloom，保留原 alpha 与现有 UI 相机 | Accepted |
 
 
 ## ADR-0001: Steam 移除与绿色便携化基础
@@ -586,7 +587,9 @@ App 只负责加载转换结果。
 ADR-0010 的结论没有被推翻：**Built-in 的全屏后处理确实会破坏分层窗口的 alpha**。
 `MEPostCompose` 不是 Built-in 后处理栈，它是自写的、显式保留 alpha 的合成 pass。
 
-### 待决：轮廓外的辉光要不要在分层窗口里显示
+### 辉光 alpha：本期保留原值，外圈效果后续实机再定
+
+2026-09-23 用户选择本期保留原 alpha，先接入主程序，再按实机效果讨论外圈辉光；见 ADR-0015。
 
 实测 Blender：开 bloom 后轮廓外有 314456 个像素的 RGB 变成非零（最亮到 95/255），但
 **alpha 仍然是 0**，与不开 bloom 时一模一样（半透明像素数都是 8828，一个不差）。
@@ -620,7 +623,10 @@ Blender 里看到的那张图。等能在 App 里实际看到再定。
   原始 BlendShape、Humanoid 与 DynamicBone。新增显式参数 batch 入口，避免本机历史
   角色名、风格或导出路径影响结果，也不改写本机配置。
 - SUN/FRONT/RIGHT 在应用预设后从求值网格提取。FRONT/RIGHT 以头骨局部方向序列化，
-  `MEModelDirections` 在动画与鼠标跟踪之后写入每个实例的 PropertyBlock；SUN 保持世界方向。
+  `MEModelDirections` 在动画与鼠标跟踪之后写入每个实例的 PropertyBlock；SUN 以模型根节点局部
+  方向解释，保持预设中日光相对角色的关系。2026-09-25 修正：原先按 App 世界方向使用，主场景
+  `Model` 节点绕 Y 转了 180°，日光被转到角色背面，平均亮度低约 25%。导出时根节点为单位旋转，
+  旧包存的数值不变，无需重导出。
 - 模型 `.me` 使用 `VRMLoader` 已支持的原始 AssetBundle 格式，与 Mods 扫描链的 ZIP `.me`
   区分。Bundle 不携带 C#，因此 App 必须先重新构建以包含方向组件。
 - 每次导出重新加载实际 bundle，验证网格/形态键、贴图色彩空间、材质及着色器出图，
@@ -686,3 +692,19 @@ LocalLow 验证表述为完整的磁盘/注册表审计或真正的原生崩溃�
 `fixed-nolog.json`、`diagnostics-off.json`、`native-startup.log`、`final-normal.json`、
 `final-force.json`、`final-relocated.json`、`resource-verification.json` 与 `build-final.log`。
 旧外部目录的删除已得到用户明确授权。
+
+## ADR-0015: 主程序仅为转译 PMX 启用 Bloom，保留原 alpha 与现有 UI 相机
+
+状态：Accepted　日期：2026-09-23（用户明确选择适用范围与 alpha 策略）
+
+- 本期只处理节点图转译的 PMX 模型。普通 VRM 和其他 `.me` 沿用其自身渲染，不套用此预设的 Filmic。
+- 合成保留源 alpha；轮廓内部受到 Bloom 影响。运行时合成 pass 3 与写回 pass 4 都会清零 alpha=0 处的 RGB，当前不显示外圈辉光。外圈是否可见留到实机查看后再定。主场景的鼠标穿透读取最终 alpha（阈值 0.1），不得把辉光扩散直接变成新的命中区域。
+- 保留原主相机、`Camera.main`、`UniWindowController.currentCamera` 与现有 Canvas 引用。模型使用独立相机按主相机当帧矩阵渲进线性 HDR，在主相机绘制普通内容与 UI 前合入 Bloom + Filmic 结果；覆盖 `MateScreenshotHandler` 的手动 `Camera.Render()`。
+- 窗口遮挡 quad 使用专用 `WindowOcclusion` 层，同时参与模型相机的深度绘制；仅在主相机事后写深度无法擦掉已合入的模型颜色。只处理导出时绑定的 Renderer，运行时提示与粒子等辅助对象继续走原路径。
+- 合成图本身不带深度。写回主相机时先用模型 Renderer 补写深度（2026-09-25 补），按合成结果 alpha ≥ 0.5 裁剪、剔除方式随原材质，使光环、拖尾等辅助对象仍被模型遮挡；半透明处按不透明近似。此处使用最终合成 alpha，未重算每层材质的裁剪；后层使总 alpha 达标时，原本透明的前层几何也可能写深度，造成局部多遮挡。
+- 分层窗口按预乘 alpha 合成。运行时输出预乘颜色：视图变换前还原未预乘值，之后乘回覆盖率，使边缘更接近材质内视图变换的旧路径、边缘辉光随覆盖率衰减（2026-09-25 补）；两角色边缘误差仍非零。离线差分保持原公式，不影响与 Blender 的对照成绩。
+- 脸部 SDF 阴影去掉头部俯仰与侧倾，只保留左右转向（2026-10-01 用户选择，目标是桌宠观感而非物理一致）。预设的脸部阴影是硬边阈值，且按日光与头部右方向点积的正负左右翻转；鼠标在脸下方时头部低头，日光相对脸部变成从头顶照下，半张脸进入阴影，鼠标稍左右移动就整块换边。`MEModelDirections` 把 FRONT/RIGHT 投影到模型根节点水平面后再写入；这两个量只在脸部材质里与 SUN 做点积，身体不受影响，头部正视时与预设逐位相同。这是有意偏离 Blender 的处理，仅在头部俯仰时生效。
+- 沿用已标定的 `MEBloomSettings.Default`，自动识别转译模型。用户选择复用现有 Bloom 开关并保留已保存状态，不新增调参面板；关闭 Bloom 仍做线性混合与 Filmic。转译模型启用时停用旧的 Unity Bloom volume，切回普通模型后恢复旧开关的作用。现有转译 `.me` 已有线性输出开关与 LUT 第 0 行，可复用；旧包必须搭配新版主程序执行新运行时逻辑。
+- 运行时按实际目标尺寸渲染；离线验收的 4× 着色超采样不是本次默认实时配置。离线九角色成绩不能直接作为 App 实时画质或帧耗成绩，需单独记录接入验证。
+
+实现与验证进度见 `PROGRESS.md`；本记录不代表运行验收完成。

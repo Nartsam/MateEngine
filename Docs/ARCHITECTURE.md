@@ -97,8 +97,10 @@
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 差分验收的对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成，出对照图与材质 ID 通道 |
 | `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读转译器的 `bindings.json`，建 LUT 与贴图、按材质名替换槽位；独立导出时严格检查并保存真实 Material/Texture2D 资产 |
 | `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把 Blender 烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
-| `Assets/PmxTranspileRuntime/MEModelDirections.cs` | prefab 自带的方向组件，LateUpdate 在鼠标跟踪之后更新头部 FRONT/RIGHT；SUN 保持世界方向，通过 PropertyBlock 隔离实例 |
-| `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。自写 pass 显式保留 alpha，已用于离线差分闭环；App 相机接入、UI 隔离与分层透明窗口运行验收仍待 Phase 4（见 ADR-0012） |
+| `Assets/PmxTranspileRuntime/MEModelDirections.cs` | prefab 自带的方向组件，LateUpdate 在鼠标跟踪之后更新头部 FRONT/RIGHT（投影到根节点水平面，去掉低头/抬头对脸部阴影的影响）；SUN 随模型根节点旋转（主场景 `Model` 节点绕 Y 转了 180°，不能按世界方向用），通过 PropertyBlock 隔离实例；在 App 中经 `BindBloom` 绑定/解除主相机的模型合成，校验不通过则不再重试 |
+| `Assets/PmxTranspileRuntime/MEModelBloom.cs` | 由转译模型方向组件接入主相机：同步当帧矩阵、离屏 HDR 渲染 Model 层、Bloom/Filmic 后在主相机绘制内容前合入并补写模型深度，保持现有 UI/截图/鼠标相机引用；切换模型恢复层与 culling mask |
+| `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。离线调用静态入口，沿用与 Blender 对照过的原公式；App 复用材质实例并输出预乘颜色（视图变换前还原未预乘值），保留 alpha、清零完全透明处的 RGB，写回时按覆盖率补模型深度 |
+| `Assets/Editor/PmxPipeline/MEModelBloomValidation.cs` | 用实际 `.me` 对比运行时与参考合成，核验 alpha、边缘与旧路径的一致性、抬臂姿势下辅助物体的遮挡、模型父节点旋转后光照不变、低头时脸部朝向不变、相机空间 UI、Bloom 开关、截图尺寸变化、模型卸载恢复及主场景自动接入 |
 | `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleManager.cs` | 运行时渲染风格单例（自举，无需改场景），保留 `默认/鲜艳/柔和` 选项与 `SettingsData.renderStyle` 持久化。**当前 `GradeEnabled = false`，全屏调色暂停**：主相机同时渲染模型和菜单，启用会使菜单一起变色。`RenderStyleImageEffect` 保留但不执行调色；新转译路线的相机集成见 ADR-0012 |
 | `Assets/MATE ENGINE - Scripts/AvatarHandlers/RenderStyleImageEffect.cs` | 相机 `OnRenderImage` 跑 `Hidden/RenderStyleGrade`；inactive 时纯 passthrough（`默认`=无效果）|
 | `Assets/MATE ENGINE - Shaders/Resources/RenderStyleGrade.shader` | 全屏调色 shader，保留源 alpha 且不动全透明像素 → 透明窗口安全。放 Resources 供运行时 `Resources.Load` |
@@ -205,7 +207,18 @@ Editor-only 的预处理流程：把 PMX 模型、MMD 物理和配套 `.blend` �
 输出。它调用 `BuildTranspiledAndExport`，不读取旧角色/风格配置；`PmxMeshBuilder` 的
 `materialProfile="transpiled"` 分支将描边写回网格、保存转译资产，并挂载 `MEModelDirections`。
 方向属性在烘描边时从 Blender 求值网格提取，无需参考渲染。App 需先构建一次以包含新组件。
-本期仅交付无 bloom 模型，视图变换在材质内完成；相机合成和 UI 隔离仍待后续（ADR-0013）。
+模型文件不携带屏幕空间 bloom。新版 App 由方向组件识别转译模型、接入 `MEModelBloom`，
+沿用已保存的 Bloom 开关；开启与关闭均在线性域混合后执行 Filmic（ADR-0015）。未接入合成
+的场合仍由材质自行完成视图变换。正式构建和运行验收状态见 `PROGRESS.md`。
+
+主相机保留原引用与 UI 配置。其 `OnPreCull` 调用禁用自动渲染的模型相机，按当前投影和目标
+尺寸生成 HDR；`BeforeForwardOpaque` 命令缓冲先按合成图覆盖率（alpha ≥ 0.5）用模型 Renderer
+补写深度，再写入合成图，随后主相机绘制现有内容与菜单，光环、拖尾、粒子等辅助物体仍被模型
+遮挡。合成输出预乘颜色，与桌面窗口的预乘 alpha 合成一致。
+`WindowOcclusion`（layer 11）承载 `AvatarWindowHandler` 生成的只写深度遮挡 quad，模型相机
+同时绘制该层，保持贴靠窗口的遮挡效果；普通模型仍由主相机处理这些 quad。
+原 Bloom 开关经 `SettingsHandlerToggles` 控制新合成，同时停用旧 Unity Bloom volume；切回
+普通模型恢复原作用。后处理 shader 显式列入 Always Included Shaders，避免 Player 剥离。
 
 ### 材质：UTS2 兜底（旧建模入口保留）
 
