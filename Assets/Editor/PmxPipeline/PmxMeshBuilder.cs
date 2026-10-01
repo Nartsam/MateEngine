@@ -191,7 +191,8 @@ namespace MateEngine.PmxPipeline
             var back = Direction("FRONT");
             var right = Direction("RIGHT");
 
-            foreach (var line in MEOutlineShell.Apply(root, options.OutlinePath)) Debug.Log(line);
+            foreach (var line in MEOutlineShell.Apply(root, options.OutlinePath, options.TranspiledBindingsPath))
+                Debug.Log(line);
             // 保留原网格资产与 GUID，只把合并结果写回；prefab 的 Body 路径和形态键不变。
             var merged = smr.sharedMesh;
             EditorUtility.CopySerialized(merged, mesh);

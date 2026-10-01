@@ -327,7 +327,21 @@ class MaterialEmitter:
         else:
             samp = "tex2D(%s, %s)" % (prop, uv)
         v = self.decl("RGBA", samp, "tex")
-        self.put(n, "Color", v, "RGBA")
+        # Blender 的 Image Texture 让 Color 输出随 Alpha 输出是否接线而变（GPU 节点
+        # node_shader_tex_image）：STRAIGHT 图在 Alpha 没接线时输出 rgb·a，PREMUL 图在
+        # Alpha 接线时输出 rgb/a；Non-Color、CHANNEL_PACKED、NONE 不受 alpha 影响。
+        # 寻梦者头发的「高光」图 98.6% 像素 alpha=0、底下 RGB 却有 0.39 的残留，不乘
+        # alpha 会把整片头发变成一块平滑亮斑，发丝状高光全部丢失。
+        mode = img.get("alpha_mode") or "STRAIGHT"
+        data = img.get("colorspace") not in (None, "sRGB")
+        color = v
+        if not data and mode not in ("CHANNEL_PACKED", "NONE"):
+            if mode == "STRAIGHT" and "Alpha" not in needed:
+                color = "float4(%s.rgb * %s.a, %s.a)" % (v, v, v)
+            elif mode == "PREMUL" and "Alpha" in needed:
+                color = ("float4((%s.a > 0.0 && %s.a < 1.0) ? %s.rgb / %s.a : %s.rgb, %s.a)"
+                         % (v, v, v, v, v, v))
+        self.put(n, "Color", color, "RGBA")
         self.put(n, "Alpha", "%s.a" % v, "VALUE")
 
     def _const_out(self, n, socket, socket_type):

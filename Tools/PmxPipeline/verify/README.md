@@ -11,6 +11,7 @@
 blender.exe -b --factory-startup -P Tools/PmxPipeline/verify/probe_hash.py
 blender.exe -b --factory-startup -P Tools/PmxPipeline/verify/probe_noise.py
 blender.exe -b --factory-startup -P Tools/PmxPipeline/verify/probe_curve_order.py
+blender.exe -b --factory-startup -P Tools/PmxPipeline/verify/probe_image_alpha.py
 ```
 
 产物（`*.txt` / `*.exr`）落在脚本同级目录，用完自行清理。
@@ -24,6 +25,10 @@ blender.exe -b --factory-startup -P Tools/PmxPipeline/verify/probe_curve_order.p
 | `noise_scale3 / noise_scale4` | 0.9820 / 0.8344 |
 | RGB Curves 求值顺序 | `cm[ch](cm[3](x))`——**先合成曲线、再逐通道曲线** |
 | Noise Texture 的 Vector 未连线 | 忽略插槽默认值，改用 Generated 坐标 |
+| Image Texture 的 Color 与 alpha（2026-10-01） | STRAIGHT 图在 **Alpha 输出未接线时 Color = rgb·a**，接线时为原 rgb；Non-Color 不受 alpha 影响（rgb=(0.8,0.6,0.4)、a=0.25 实测 (0.2,0.15,0.1) / (0.8,0.6,0.4) / (0.8,0.6,0.4)）。PREMUL 图在 Alpha 接线时 rgb/a，按 GPU 节点源码实现、未单独实测。漏掉这条曾让寻梦者头发 ΔE 5.83、大月下头巾 ΔE 8.51 |
+
+注意：`probe_image_alpha.py` 的测试图必须先存成浮点 EXR 再按文件加载，并关掉
+`use_half_precision`——内存里生成的图不会上传 GPU，半精度上传会带来约 2e-4 的偏差。
 
 注意：`probe_noise.py` 必须用**连线的** Combine XYZ 喂坐标。直接写
 `nz.inputs["Vector"].default_value` 是无效的——未连线时 Blender 根本不读它。

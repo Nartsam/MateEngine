@@ -35,7 +35,8 @@ namespace MateEngine.PmxPipeline
             public float Width;
         }
 
-        public static List<string> Apply(GameObject root, string metaPath)
+        /// <param name="bindingsPath">给定时按图集修正描边材质（仅导出 .me 用）；离线差分不传，保持与 Blender 一致。</param>
+        public static List<string> Apply(GameObject root, string metaPath, string bindingsPath = null)
         {
             var log = new List<string>();
             var shell = Load(metaPath, log);
@@ -49,6 +50,7 @@ namespace MateEngine.PmxPipeline
             }
 
             var baseMesh = smr.sharedMesh;
+            if (bindingsPath != null) RetargetAtlas(shell, baseMesh, smr.sharedMaterials, bindingsPath, log);
             var merged = Merge(baseMesh, shell, log);
             smr.sharedMesh = merged;
 
@@ -120,6 +122,142 @@ namespace MateEngine.PmxPipeline
             log.Add($"读入描边外壳：顶点 {v} 索引 {ic} 焊接引用 {wc} " +
                     $"子网格 {string.Join("/", s.Submeshes.Select(x => $"{x.material}:{x.count / 3}"))}");
             return s;
+        }
+
+        // ---- 按图集修正描边材质 ---------------------------------------------
+        //
+        // 预设可能把一个描边材质挂到不同贴图图集的部位上。丽塔的 edge_clothes 采样 Body 光照图，
+        // 却也覆盖了 UV 在 Body_Parts 图集里的袜子/腿带/鞋子；按 alpha 分档取色时，约 5% 的
+        // 腿部描边碰巧落进 0.05 的橙色皮肤档，深色背景上露出零星橙线（Blender 里同样存在）。
+        // 预设已备有采样 Body_Parts 的 edge_clothes2，只是没挂上。这里逐三角形按焊接组找回
+        // 底层材质：若它不用描边材质采样的那张贴图，优先换成结构相同（节点数一致、只采样一张
+        // 贴图）、没有被任何部位使用、且采样的正是底层材质那张贴图的描边材质；没有的话（如
+        // 寻梦者只有采样 Body 光照图的描边，腿部却在 Leg 图集），就用同一描边材质换图的变体，
+        // 新贴图取底层材质里色彩空间相同、文件名共同后缀（如 `_Lightmap`）最长且唯一的那张。
+        // 两种都判定不出则不动。
+        private sealed class BindingInfo
+        {
+            public int NodeCount;
+            public string[] Images;
+            public bool[] Srgb;
+        }
+
+        private static string VariantFor(string material, BindingInfo edge, BindingInfo baseInfo)
+        {
+            string role = Path.GetFileNameWithoutExtension(edge.Images[0]);
+            var scored = Enumerable.Range(0, baseInfo.Images.Length)
+                .Where(i => baseInfo.Srgb[i] == edge.Srgb[0])
+                .Select(i => (image: baseInfo.Images[i],
+                              score: CommonSuffix(role, Path.GetFileNameWithoutExtension(baseInfo.Images[i]))))
+                .OrderByDescending(x => x.score).ToArray();
+            // 至少共享 4 个字符的后缀，且最高分唯一，否则视为认不出对应关系。
+            if (scored.Length == 0 || scored[0].score < 4 ||
+                (scored.Length > 1 && scored[1].score == scored[0].score)) return null;
+            return material + METranspiledMaterials.VariantSeparator + scored[0].image;
+        }
+
+        private static int CommonSuffix(string a, string b)
+        {
+            int n = 0;
+            while (n < a.Length && n < b.Length &&
+                   char.ToLowerInvariant(a[a.Length - 1 - n]) == char.ToLowerInvariant(b[b.Length - 1 - n])) n++;
+            return n;
+        }
+
+        private static void RetargetAtlas(Shell shell, Mesh baseMesh, Material[] baseMaterials,
+                                          string bindingsPath, List<string> log)
+        {
+            var bindings = new Dictionary<string, BindingInfo>();
+            var data = JObject.Parse(File.ReadAllText(bindingsPath, Encoding.UTF8));
+            foreach (JObject m in (JArray)data["materials"])
+                bindings[(string)m["name"]] = new BindingInfo
+                {
+                    NodeCount = (int?)m["nodeCount"] ?? -1,
+                    Images = ((JArray)m["textures"]).Select(t => (string)t["image"]).ToArray(),
+                    Srgb = ((JArray)m["textures"]).Select(t => (bool?)t["srgb"] ?? true).ToArray(),
+                };
+
+            int bn = baseMesh.vertexCount;
+            var baseNames = new string[baseMesh.subMeshCount];
+            var vertexSubmesh = Enumerable.Repeat(-1, bn).ToArray();
+            for (int m = 0; m < baseMesh.subMeshCount; m++)
+            {
+                if (m < baseMaterials.Length && baseMaterials[m] != null)
+                    baseNames[m] = METranspiledMaterials.ResolveName(baseMaterials[m].name, bindings.ContainsKey);
+                foreach (int v in baseMesh.GetTriangles(m)) vertexSubmesh[v] = m;
+            }
+            var used = new HashSet<string>(baseNames.Where(n => n != null));
+            used.UnionWith(shell.Submeshes.Select(s => s.material));
+
+            var groups = new List<(string material, List<int> tris)>();
+            var moved = new Dictionary<string, int>();
+            List<int> Group(string name)
+            {
+                int k = groups.FindIndex(g => g.material == name);
+                if (k >= 0) return groups[k].tris;
+                groups.Add((name, new List<int>()));
+                return groups[^1].tris;
+            }
+            var votes = new Dictionary<int, int>();
+            foreach (var (material, start, count) in shell.Submeshes)
+            {
+                var target = Group(material);
+                bindings.TryGetValue(material, out var edge);
+                for (int t = start; t < start + count; t += 3)
+                {
+                    string dest = material;
+                    if (edge != null && edge.Images.Length == 1)
+                    {
+                        votes.Clear();
+                        for (int c = 0; c < 3; c++)
+                        {
+                            int sv = shell.Triangles[t + c];
+                            for (int k = shell.WeldOffsets[sv]; k < shell.WeldOffsets[sv + 1]; k++)
+                            {
+                                int bv = shell.WeldIndices[k];
+                                if (bv < 0 || bv >= bn || vertexSubmesh[bv] < 0) continue;
+                                votes.TryGetValue(vertexSubmesh[bv], out int n);
+                                votes[vertexSubmesh[bv]] = n + 1;
+                            }
+                        }
+                        string baseName = votes.Count == 0 ? null
+                            : baseNames[votes.OrderByDescending(kv => kv.Value).First().Key];
+                        if (baseName != null && bindings.TryGetValue(baseName, out var baseInfo) &&
+                            !baseInfo.Images.Contains(edge.Images[0]))
+                        {
+                            dest = bindings.Where(kv => !used.Contains(kv.Key) &&
+                                                        kv.Value.NodeCount == edge.NodeCount &&
+                                                        kv.Value.Images.Length == 1 &&
+                                                        baseInfo.Images.Contains(kv.Value.Images[0]))
+                                           .Select(kv => kv.Key).OrderBy(n => n, StringComparer.Ordinal)
+                                           .FirstOrDefault()
+                                   ?? VariantFor(material, edge, baseInfo) ?? material;
+                        }
+                    }
+                    var list = dest == material ? target : Group(dest);
+                    list.Add(shell.Triangles[t]);
+                    list.Add(shell.Triangles[t + 1]);
+                    list.Add(shell.Triangles[t + 2]);
+                    if (dest != material)
+                    {
+                        string key = $"{material}→{dest}";
+                        moved.TryGetValue(key, out int n);
+                        moved[key] = n + 1;
+                    }
+                }
+            }
+            if (moved.Count == 0) return;
+
+            var tris = new List<int>(shell.Triangles.Length);
+            shell.Submeshes.Clear();
+            foreach (var (material, list) in groups)
+            {
+                if (list.Count == 0) continue;
+                shell.Submeshes.Add((material, tris.Count, list.Count));
+                tris.AddRange(list);
+            }
+            shell.Triangles = tris.ToArray();
+            log.Add("描边按底层图集改挂：" + string.Join("，", moved.Select(kv => $"{kv.Key} {kv.Value} 面")));
         }
 
         // ---- 合并 -----------------------------------------------------------

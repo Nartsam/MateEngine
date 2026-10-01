@@ -293,14 +293,44 @@ namespace MateEngine.PmxPipeline
 
         // Unity 侧材质名来自 PMX 材质名，重名时 UniqueMaterialName 会加后缀；
         // 实例化后还会带 " (Instance)"。
-        private string ResolveName(string unityName)
+        // 描边按图集修正时，预设里没有合适的备用描边材质，就要「同一描边材质换一张贴图」的
+        // 变体，名字写成 原名@贴图名（见 MEOutlineShell.RetargetAtlas）。着色器不变。
+        public const char VariantSeparator = '@';
+
+        private bool EnsureVariant(string name)
+        {
+            int at = name.IndexOf(VariantSeparator);
+            if (at <= 0 || !ByName.TryGetValue(name.Substring(0, at), out var source)) return false;
+            string image = name.Substring(at + 1);
+            var materials = ((JArray)_data["materials"]).Cast<JObject>().ToArray();
+            var sourceTex = materials.First(m => (string)m["name"] == name.Substring(0, at))["textures"]
+                                     .Cast<JObject>().Single();
+            var file = materials.SelectMany(m => m["textures"].Cast<JObject>())
+                                .FirstOrDefault(t => (string)t["image"] == image)?["file"];
+            if (file == null) return false;
+            // 采样方式沿用原描边材质，只换图。
+            var tex = LoadTexture((string)file, (bool)sourceTex["srgb"],
+                                  (string)sourceTex["interpolation"], (string)sourceTex["wrap"]);
+            if (tex == null) return false;
+            var variant = new Material(source) { name = $"{name} (transpiled)" };
+            variant.SetTexture((string)sourceTex["prop"], tex);
+            _owned.Add(variant);
+            ByName[name] = variant;
+            Say($"描边变体 {name}：沿用 {source.shader.name}，贴图换为 {file}");
+            return true;
+        }
+
+        private string ResolveName(string unityName) =>
+            ResolveName(unityName, ByName.ContainsKey) ?? (EnsureVariant(unityName) ? unityName : null);
+
+        internal static string ResolveName(string unityName, Func<string, bool> known)
         {
             string n = unityName;
             int i = n.IndexOf(" (Instance)", StringComparison.Ordinal);
             if (i >= 0) n = n.Substring(0, i);
-            if (ByName.ContainsKey(n)) return n;
+            if (known(n)) return n;
             var m = System.Text.RegularExpressions.Regex.Match(n, @"^(.*?)(?:[ _]\d+)$");
-            if (m.Success && ByName.ContainsKey(m.Groups[1].Value)) return m.Groups[1].Value;
+            if (m.Success && known(m.Groups[1].Value)) return m.Groups[1].Value;
             return null;
         }
 

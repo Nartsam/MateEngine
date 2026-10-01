@@ -96,7 +96,7 @@
 | `Assets/Editor/PmxPipeline/PmxStyleConfig.cs` | 逐模型风格配置（JSON）DTO 与加载器；把材质风格调参从 C# 解耦到数据。Shader 无关旋钮：`materialProfile`、`skinWarmth`、`brightness`、`outlineScale`、`rimStrength`，及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖 |
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 差分验收的对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成，出对照图与材质 ID 通道 |
 | `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读转译器的 `bindings.json`，建 LUT 与贴图、按材质名替换槽位；独立导出时严格检查并保存真实 Material/Texture2D 资产 |
-| `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把 Blender 烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
+| `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把 Blender 烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移；导出 `.me` 时按底层材质的贴图图集修正描边材质，改挂预设备用描边或生成换图变体（离线差分不启用） |
 | `Assets/PmxTranspileRuntime/MEModelDirections.cs` | prefab 自带的方向组件，LateUpdate 在鼠标跟踪之后更新头部 FRONT/RIGHT（投影到根节点水平面，去掉低头/抬头对脸部阴影的影响）；SUN 随模型根节点旋转（主场景 `Model` 节点绕 Y 转了 180°，不能按世界方向用），通过 PropertyBlock 隔离实例；在 App 中经 `BindBloom` 绑定/解除主相机的模型合成，校验不通过则不再重试 |
 | `Assets/PmxTranspileRuntime/MEModelBloom.cs` | 由转译模型方向组件接入主相机：同步当帧矩阵、离屏 HDR 渲染 Model 层、Bloom/Filmic 后在主相机绘制内容前合入并补写模型深度，保持现有 UI/截图/鼠标相机引用；切换模型恢复层与 culling mask |
 | `Assets/PmxTranspileRuntime/MEPostCompose.cs` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ Filmic 视图变换。离线调用静态入口，沿用与 Blender 对照过的原公式；App 复用材质实例并输出预乘颜色（视图变换前还原未预乘值），保留 alpha、清零完全透明处的 RGB，写回时按覆盖率补模型深度 |

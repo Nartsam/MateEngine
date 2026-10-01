@@ -185,7 +185,7 @@ Build/.venv/Scripts/python.exe -m pip install numpy pillow
 | `Assets/Editor/PmxPipeline/MEModelBloomValidation.cs` | 实际 bundle 的主相机合成与参考合成对照，并验证边缘相对旧路径的误差改善、辅助物体遮挡、UI、alpha、开关、尺寸变化、模型卸载和主场景自动接入 |
 | `Assets/Editor/PmxPipeline/MERefRenderer.cs` | 对照端：建模型、装配转译材质、并入描边外壳、按 Blender 报告对齐相机与方向 uniform、4× 超采样渲染、跑合成、出对照图与材质 ID 通道 |
 | `Assets/Editor/PmxPipeline/METranspiledMaterials.cs` | 读 `bindings.json`，建 LUT 贴图与各贴图，按材质名替换槽位 |
-| `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移 |
+| `Assets/Editor/PmxPipeline/MEOutlineShell.cs` | 把烘好的描边外壳并进基础网格：翻转绕序、按焊接组平均骨权重与 BlendShape 位移；导出 `.me` 时按底层图集修正描边材质（改挂备用描边或生成换图变体），离线差分不启用；导出日志「描边按底层图集改挂」列出改动 |
 | `Assets/Editor/PmxPipeline/IdPass.shader` | 材质 ID 通道，供差分做逐材质分解 |
 | `Assets/PmxTranspileRuntime/MEPostCompose.{cs,shader}` | 离屏线性 HDR 缓冲上的合成：bloom（阈值/降采样/帐篷升采样/累加）+ 视图变换。alpha 感知，不破坏分层窗口 |
 | `Assets/Generated/PmxTranspiled/<角色>/` | 转译产物（已忽略，一条命令可重建） |
