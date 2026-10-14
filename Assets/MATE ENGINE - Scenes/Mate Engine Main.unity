@@ -25977,7 +25977,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 609663593}
-  - component: {fileID: 609663594}
   m_Layer: 0
   m_Name: SteamDRM
   m_TagString: Untagged
@@ -26000,18 +25999,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 211989033}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &609663594
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 609663592}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1876b1d74a9834e4fa08f55c83130cdf, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: '::'
 --- !u!1 &610638210
 GameObject:
   m_ObjectHideFlags: 0
@@ -89729,7 +89716,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1164786775}
-  - component: {fileID: 1164786776}
   m_Layer: 0
   m_Name: SteamSDK
   m_TagString: Untagged
@@ -89752,18 +89738,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 211989033}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1164786776
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1164786773}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ef4bffeda13d7a748973ff9204401c07, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1164931971
 GameObject:
   m_ObjectHideFlags: 0
@@ -91602,7 +91576,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1247369942}
-  - component: {fileID: 1247369943}
   m_Layer: 0
   m_Name: SteamContent
   m_TagString: Untagged
@@ -91625,31 +91598,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 211989033}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1247369943
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1247369941}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7f7e127e051cfaf41b942b3f2477c180, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  steamAppId: 3625270
-  ttlDays: 14
-  retrySeconds: 10
-  maxWaitSeconds: 180
-  steamOnlyObjects:
-  - {fileID: 1585285913}
-  - {fileID: 1875027012}
-  - {fileID: 2177939448691428898}
-  - {fileID: 147838011}
-  notSteamObjects:
-  - {fileID: 405135853}
-  - {fileID: 2070187287}
-  - {fileID: 27157550}
 --- !u!1 &1247745269
 GameObject:
   m_ObjectHideFlags: 0
@@ -129272,8 +129220,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1924328910}
-  - component: {fileID: 1924328909}
-  - component: {fileID: 1924328911}
   m_Layer: 0
   m_Name: SteamWorkshop
   m_TagString: Untagged
@@ -129281,18 +129227,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1924328909
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1924328907}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a3ff0af1cd6f05644815b2f1f3c5f6b8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!4 &1924328910
 Transform:
   m_ObjectHideFlags: 0
@@ -129308,18 +129242,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 211989033}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1924328911
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1924328907}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6c13f3e5b2ffcf946bc185afab1fa2ba, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: '::'
 --- !u!1 &1928981195
 GameObject:
   m_ObjectHideFlags: 0
@@ -203749,39 +203671,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &4100090247003562447
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6271431641506568567}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a2e40bef6e2fd4948bcf36a40fdd6e65, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  entry:
-    displayName: 
-    author: 
-    version: 
-    fileType: 
-    filePath: 
-    thumbnailPath: 
-    polygonCount: 0
-    isSteamWorkshop: 0
-    steamFileId: 0
-    isNSFW: 0
-    isOwner: 0
-  progressSlider: {fileID: 0}
-  labelText: {fileID: 7128142485308659779}
-  errorText: {fileID: 4870331205572058838}
-  audioSource: {fileID: 3732114302183770828}
-  tickSound: {fileID: 8300000, guid: ed75ee7d66b3feb419728cbd10cbd9a2, type: 3}
-  completeSound: {fileID: 8300000, guid: bd8c385aa551a604093624314940e2b6, type: 3}
-  fallbackUpload: Upload
-  fallbackUpdate: Update
-  fallbackPngMissing: PNG Missing
 --- !u!114 &4100334271301181462
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -203824,7 +203713,6 @@ GameObject:
   - component: {fileID: 6087218476860361622}
   - component: {fileID: 3718201142713848818}
   - component: {fileID: 3057327874378888446}
-  - component: {fileID: 4745254178023671580}
   m_Layer: 5
   m_Name: Upload
   m_TagString: Untagged
@@ -208526,39 +208414,6 @@ MonoBehaviour:
   m_hasFontAssetChanged: 0
   m_baseMaterial: {fileID: 0}
   m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
---- !u!114 &4745254178023671580
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4102374442274695299}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a2e40bef6e2fd4948bcf36a40fdd6e65, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  entry:
-    displayName: 
-    author: 
-    version: 
-    fileType: 
-    filePath: 
-    thumbnailPath: 
-    polygonCount: 0
-    isSteamWorkshop: 0
-    steamFileId: 0
-    isNSFW: 0
-    isOwner: 0
-  progressSlider: {fileID: 0}
-  labelText: {fileID: 5078284005059915139}
-  errorText: {fileID: 3548018164841922530}
-  audioSource: {fileID: 7499145928002620552}
-  tickSound: {fileID: 8300000, guid: ed75ee7d66b3feb419728cbd10cbd9a2, type: 3}
-  completeSound: {fileID: 8300000, guid: bd8c385aa551a604093624314940e2b6, type: 3}
-  fallbackUpload: Upload
-  fallbackUpdate: Update
-  fallbackPngMissing: PNG Missing
 --- !u!1 &4756266774176435778
 GameObject:
   m_ObjectHideFlags: 0
@@ -250099,7 +249954,6 @@ GameObject:
   - component: {fileID: 831885840082022834}
   - component: {fileID: 5812714879521996783}
   - component: {fileID: 5934493420714959132}
-  - component: {fileID: 4100090247003562447}
   m_Layer: 5
   m_Name: Upload
   m_TagString: Untagged
