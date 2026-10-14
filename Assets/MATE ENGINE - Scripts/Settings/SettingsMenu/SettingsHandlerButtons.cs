@@ -68,15 +68,13 @@ public class SettingsHandlerButtons : MonoBehaviour
         switch (data.windowSizeState)
         {
             case SaveLoadHandler.SettingsData.WindowSizeState.Normal:
-                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Big;
-                controller.windowSize = new Vector2(2048, 1536); break;
+                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Big; break;
             case SaveLoadHandler.SettingsData.WindowSizeState.Big:
-                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Small;
-                controller.windowSize = new Vector2(768, 512); break;
+                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Small; break;
             case SaveLoadHandler.SettingsData.WindowSizeState.Small:
-                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Normal;
-                controller.windowSize = new Vector2(1536, 1024); break;
+                data.windowSizeState = SaveLoadHandler.SettingsData.WindowSizeState.Normal; break;
         }
+        controller.windowSize = SaveLoadHandler.WindowSize(data.windowSizeState);
         SaveLoadHandler.Instance.SaveToDisk();
     }
     private void OnRefreshAppsClicked()

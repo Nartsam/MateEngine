@@ -1,6 +1,8 @@
 ﻿using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using Kirurobo;
 using Newtonsoft.Json;
 using System;
 
@@ -53,6 +55,34 @@ public class SaveLoadHandler : MonoBehaviour
         {
             limiter.targetFPS = data.fpsLimit;
             limiter.ApplyFPSLimit();
+        }
+    }
+
+    private void Start()
+    {
+        if (Instance == this) StartCoroutine(RestoreWindowSize());
+    }
+
+    // 启动时按设置恢复窗口大小。设置里的档位原先只在点按钮时生效，启动时沿用 Unity 记在 PlayerPrefs（注册表，与原版
+    // Mate Engine 共用同一项）里的上次尺寸；窗口一旦被撑大（如在大屏模式下退出、显示器连接变化），之后每次启动都是大窗口。
+    private IEnumerator RestoreWindowSize()
+    {
+        // 不用 UniWindowController.current：场景里没有时它会新建一个。窗口在它第一次 Update 时才被接管，接管前尺寸读出为 0、设置无效。
+        var controller = FindFirstObjectByType<UniWindowController>();
+        if (controller == null) yield break;
+        for (int i = 0; i < 300 && controller != null && controller.windowSize == Vector2.zero; i++) yield return null;
+        if (controller == null || controller.windowSize == Vector2.zero) yield break;
+        var size = WindowSize(data.windowSizeState);
+        if (controller.windowSize != size) controller.windowSize = size;
+    }
+
+    public static Vector2 WindowSize(SettingsData.WindowSizeState state)
+    {
+        switch (state)
+        {
+            case SettingsData.WindowSizeState.Big: return new Vector2(2048, 1536);
+            case SettingsData.WindowSizeState.Small: return new Vector2(768, 512);
+            default: return new Vector2(1536, 1024);
         }
     }
 
