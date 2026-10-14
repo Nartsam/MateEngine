@@ -5,6 +5,7 @@
 - **Unity**：6000.2.6f2（必须精确匹配）
 - **Visual Studio 2022**：勾选「使用 Unity 的游戏开发」和「使用 C++ 的桌面开发」（MSVC x64 + Windows SDK）
 - 当前仍使用 Mono；C++ 工具用于编译小型便携启动入口，发行版运行不需要 Visual Studio 或额外 VC Runtime DLL
+- **CMake**（仅在修改 PMX 刚体物理的原生库时需要）：`Assets/Plugins/x86_64/MateMmdPhysics.dll` 随 Player 打包，平时直接构建即可；改了 `Tools/MmdPhysicsNative/` 的源码后，先关掉 Unity 编辑器，再运行该目录的 `build.ps1` 重新生成（静态链接 CRT，同样不需要额外 VC Runtime）
 
 ## 构建步骤
 
@@ -84,6 +85,7 @@ Visual Studio 或 PowerShell。更新时复制需要保留的 `UserData/`，自�
 | `Build/` | 最终可执行文件和运行时数据 |
 | `Build/Releases/` | 按明确文件清单打包的自用 ZIP，不包含个人数据 |
 | `Build/PortableRuntime/` | 原生入口的编译中间文件，不随发行版复制 |
+| `Build/MmdPhysicsNative/` | 刚体物理原生库的编译中间文件，不随发行版复制 |
 | `Library/` | 资产导入缓存（项目内，可删除后重建） |
 | `Temp/` | 编译临时文件（编辑器关闭后自动清理） |
 

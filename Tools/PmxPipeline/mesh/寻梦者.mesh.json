@@ -1,0 +1,5 @@
+{
+  "smoothNormalsPattern": "^头发$",
+  "smoothNormalsRadius": 0.05,
+  "proxyNormalsWeight": 0.75
+}

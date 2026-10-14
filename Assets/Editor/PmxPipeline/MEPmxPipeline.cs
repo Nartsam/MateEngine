@@ -98,7 +98,7 @@ namespace MateEngine.PmxPipeline
         // 走 App 现有 `.me` 加载链直接显示；自带渲染，不依赖 App 侧风格系统。
         //
         // 架构结论：VRM+RenderStyle 路径已归档（见 ADR-0009），当前 PMX 生产路径是
-        // Editor 离线导入 -> 转译材质（UTS2 兜底）+ DynamicBone -> `.me`。
+        // Editor 离线导入 -> 转译材质（UTS2 兜底）+ 刚体物理（MmdPhysics，ADR-0017）-> `.me`。
         //
         // 实现时踩过的坑 + 解决：
         //  1) AssetBundle 不能含 C# 脚本——脚本对玩家程序集解析；ExportInternal 里依赖收集已排除 .cs。
@@ -429,7 +429,7 @@ namespace MateEngine.PmxPipeline
                 int vertexMorphs = model.Morphs.Count(m => m.Type == PmxMorphType.Vertex);
                 int dynamicBodies = model.RigidBodies.Count(rb => rb.PhysicsMode != 0);
                 sb.AppendLine($"  vertex morphs (-> blendshapes): {vertexMorphs}");
-                sb.AppendLine($"  dynamic rigidbodies (-> DynamicBone candidates): {dynamicBodies}");
+                sb.AppendLine($"  dynamic rigidbodies (-> MmdPhysics): {dynamicBodies}");
 
                 // Lip-sync / blink morphs the dance system drives by name.
                 string[] lipsync = { "まばたき", "あ", "い", "う", "え", "お", "にこり", "怒り", "困る", "真面目", "笑い" };

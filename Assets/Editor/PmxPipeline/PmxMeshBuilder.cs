@@ -8,7 +8,7 @@
 // model — e.g. bangs ending up on the wrong eye.) Vertices AND bone bind transforms
 // use the SAME conversion, so skinning stays consistent.
 //
-// Humanoid avatar is M2, physics is M3/M3.5, preset-driven NPR material mapping is M4.
+// Humanoid avatar is M2, physics is ADR-0017 (rigid bodies for Bullet), preset-driven NPR material mapping is M4.
 //
 // Part of the MateEngine PMX offline import pipeline. See Docs/DECISIONS_RECORD.md ADR-0008.
 using System;
@@ -37,7 +37,7 @@ namespace MateEngine.PmxPipeline
         // 1 MMD unit ≈ 0.08 m (de-facto MMD->Unity scale; ~20-unit model -> ~1.6 m).
         public const float DefaultScale = 0.08f;
 
-        private static Vector3 Conv(Vector3 v, float s) => new(-v.x * s, v.y * s, -v.z * s);
+        internal static Vector3 Conv(Vector3 v, float s) => new(-v.x * s, v.y * s, -v.z * s);
         private static Vector3 ConvDir(Vector3 v) => new(-v.x, v.y, -v.z);
 
         public static PmxBuildResult Build(PmxModel model, string pmxPath, PmxPipelineOptions options, PmxRenderPreset renderPreset)
@@ -86,6 +86,17 @@ namespace MateEngine.PmxPipeline
             bool[] orphanVert = FindOrphanVerts(model);
 
             var mesh = BuildMesh(model, scale, modelName, skinRemap, orphanVert);
+            var meshOptions = PmxMeshAdjust.LoadConfig(modelName, out string meshConfigPath);
+            if (meshConfigPath != null)
+            {
+                Vector3? BonePosition(string name)
+                {
+                    int i = model.Bones.FindIndex(b => b.NameLocal == name);
+                    return i >= 0 ? Conv(model.Bones[i].Position, scale) : null;
+                }
+                Debug.Log($"[PmxBuilder] Mesh adjust: {PmxMeshAdjust.Apply(mesh, model.Materials.Select(m => m.NameLocal).ToList(), meshOptions, BonePosition)} " +
+                          $"config={meshConfigPath}");
+            }
             AssetDatabase.CreateAsset(mesh, $"{outFolder}/{modelName}.asset");
 
             // SMR lives on a child named "Body" so dance-clip blendshape curves (which bind
@@ -131,11 +142,13 @@ namespace MateEngine.PmxPipeline
                                $"Missing required: {string.Join(", ", humanoid.MissingRequired)}");
             }
 
-            // --- physics (M3): PMX rigid bodies/joints -> DynamicBone chains ----------
-            var physics = PmxPhysics.Build(model, root.transform, boneTf, animator);
-            Debug.Log($"[PmxBuilder] DynamicBone: components={physics.DynamicBones} chains={physics.ChainRoots} " +
-                      $"colliders={physics.Colliders} " +
-                      $"(hair={physics.Hair} skirt={physics.Skirt} breast={physics.Breast} other={physics.Other})");
+            // --- physics (ADR-0017): PMX rigid bodies/joints -> MmdPhysics, simulated by Bullet at runtime --
+            string physicsConfig = PmxRigidPhysics.LoadConfig(modelName, out string physicsConfigPath);
+            var physics = PmxRigidPhysics.BuildWithConfig(model, root, boneTf, scale, physicsConfig);
+            Debug.Log($"[PmxBuilder] MmdPhysics: bodies={physics.Bodies} joints={physics.Joints} pruned={physics.Pruned} " +
+                      $"anchored={physics.Anchored} loosened={physics.Loosened} offsetLocks={physics.OffsetLocks} " +
+                      $"followed={physics.Followed} maskedOff={physics.MaskedOff} " +
+                      $"config={(physicsConfig != null ? physicsConfigPath : "none")}");
 
             AddRenderProfile(root, renderPreset);
 
@@ -556,7 +569,7 @@ namespace MateEngine.PmxPipeline
         }
 
         // Humanoid mapping matches bones by these names, so they must be unique.
-        private static string[] MakeUniqueBoneNames(List<PmxBone> bones)
+        internal static string[] MakeUniqueBoneNames(List<PmxBone> bones)
         {
             var names = new string[bones.Count];
             var seen = new HashSet<string>();

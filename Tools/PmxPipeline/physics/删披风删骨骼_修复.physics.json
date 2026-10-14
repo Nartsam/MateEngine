@@ -1,0 +1,7 @@
+{
+  "jointStopErp": 0.2,
+  "jointStopErpPattern": "胸",
+  "jointStopErpMatched": 0.475,
+  "maskOffPattern": "胸",
+  "maskOffGroups": [0]
+}

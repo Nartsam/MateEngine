@@ -60,6 +60,7 @@ MateEngine 是基于 GitHub 开源桌面宠物软件 Mate-Engine 的个人 fork�
 - 对旧路径、旧 PlayerPrefs、旧 JSON 字段做迁移时，要保留回退和异常处理。
 - 移除功能时优先保持序列化兼容：字段可以保留，行为可以禁用。
 - Steam 依赖已移除。不要重新引入 Steamworks.NET、Steam Workshop、Steam DRM 或 `steam_api64.dll`。
+- 改动主相机、窗口、截图、UI 渲染，或模型根节点的缩放、瞬移、动画与 IK 的执行顺序时，除普通 VRM 外还要加载一个转译 PMX 模型（`.me`）验证：转译模型由独立的模型相机渲染，在主相机绘制 UI 之前合入（`MEModelBloom`，ADR-0015，`Docs/ARCHITECTURE.md`「材质：节点图转译（主线）」一节）；它的物理骨骼由 `MmdPhysics` 在动画与 IK 之后驱动（ADR-0017）。只用 VRM 测试发现不了这两条路径上的问题。
 - 文档同步的对应关系见下方「改了什么就更新哪份」。
 
 ## 关键文档

@@ -1,0 +1,8 @@
+{
+  "jointStopErp": 0.3,
+  "jointStopErpPattern": "^(bs|zb|wts?|qz|xd|td)(_|[0-9])",
+  "jointStopErpMatched": 0.2,
+  "followPattern": "^Bone_C1_Head_Hair_F",
+  "maskOffPattern": "胸",
+  "maskOffGroups": [0]
+}

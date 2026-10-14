@@ -95,3 +95,6 @@ __pycache__/
 # 独立导出时 PmxImported 材质会引用这些 shader；两者均为可重建的本地产物）
 Assets/Generated/
 Assets/Generated.meta
+
+# Bullet 源码由 Tools/MmdPhysicsNative/build.ps1 拉取
+Tools/MmdPhysicsNative/bullet3/

@@ -9,7 +9,7 @@
 | Unity | `6000.2.6f2`，必须精确匹配 |
 | 启动场景 | `Assets/MATE ENGINE - Scenes/Mate Engine Loading.unity` |
 | 主场景 | `Assets/MATE ENGINE - Scenes/Mate Engine Main.unity` |
-| 渲染管线 | Built-in（内置渲染管线）。注意：`Assets/Settings/` 下存在 `PC_RPAsset`/`Mobile_RPAsset`/`UniversalRenderPipelineGlobalSettings` 等 URP 残留资产，但 URP 包并未安装（不在 `manifest.json`/`packages-lock.json`/`PackageCache`/嵌入包中），`GraphicsSettings`/`QualitySettings` 也未指派任何 SRP，因此实际运行在 Built-in。这些 URP 资产为惰性残留，不要据此误判为 URP。 |
+| 渲染管线 | Built-in（内置渲染管线）。URP 包未安装，`GraphicsSettings`/`QualitySettings` 未指派任何 SRP；原 `Assets/Settings/` 下未被使用的 URP 配置资产已于 2026-10-05 清理。 |
 | 主要语言 | C# |
 | 构建目标 | Windows x86_64 |
 | 开发期构建 | Mono |
@@ -27,7 +27,8 @@
 | Newtonsoft.Json | 设置和数据 JSON 序列化 |
 | MToon（Built-in 变体） | 默认 VRM 卡通着色器。默认角色 Zome 材质即使用 `Assets/MATE ENGINE - Packages/VRM/MToon/Shaders/MToon.shader`（Built-in 变体，非 URP 变体） |
 | UTS2 / Poiyomi / lilToon | 工程内已内置的 Built-in NPR 卡通着色器，可用于高级/原神风渲染。UTS2 位于 `Assets/MATE ENGINE - Packages/Toon/`（Unity-Chan Toon Shader 2），Poiyomi/lilToon 位于 `Assets/MATE ENGINE - Shaders/`。主要通过 Mod 或角色资源使用 |
-| DynamicBone | `.me`/PMX 模型的头发、裙摆、胸部等 MMD 物理近似运行时组件；位于 `Assets/DynamicBone/` |
+| DynamicBone | `.me`/PMX 模型的头发、裙摆、胸部等 MMD 物理近似运行时组件；位于 `Assets/DynamicBone/`。2026-10-08 起 PMX 导出改用 Bullet 刚体物理（ADR-0017），之前导出的 `.me` 仍带它 |
+| Bullet 3.25 | PMX 刚体物理的原生引擎（zlib 许可），封装为 `Assets/Plugins/x86_64/MateMmdPhysics.dll`，由 `MmdPhysics` 组件调用（ADR-0017） |
 | LLMUnity / Qwen 2.5 1.5b | 可选本地 LLM 聊天 |
 | VRM SpringBone | 头发、衣物等物理摆动 |
 
@@ -45,18 +46,23 @@
 | `Assets/LLMUnity/` | 本地 LLM 插件和运行时 |
 | `Assets/MATE ENGINE - Packages/` | 内置第三方 Unity 包 |
 | `Assets/MATE ENGINE - Shaders/` | Poiyomi、lilToon、Mochie 等 Shader 资源（MToon 在 `MATE ENGINE - Packages/VRM/MToon/`，UTS2 在 `MATE ENGINE - Packages/Toon/`） |
-| `Assets/DynamicBone/` | DynamicBone 运行时组件；PMX 离线管线把 MMD 刚体/关节近似转换为这些组件 |
+| `Assets/DynamicBone/` | DynamicBone 运行时组件；2026-10-08 之前导出的 PMX `.me` 用它近似 MMD 物理 |
 | `Assets/Editor/` | 编辑器脚本，包含命令行构建脚本与编辑器工具 |
-| `Assets/Editor/PmxPipeline/` | PMX 离线导入管线的 Unity 侧：解析 PMX、生成网格/骨架/BlendShape、Humanoid Avatar、DynamicBone/碰撞体、装配转译材质与描边外壳、差分对照渲染，并导出 `.me` |
+| `Assets/Editor/PmxPipeline/` | PMX 离线导入管线的 Unity 侧：解析 PMX、生成网格/骨架/BlendShape、Humanoid Avatar、刚体物理（`MmdPhysics`）、装配转译材质与描边外壳、差分对照渲染，并导出 `.me` |
 | `Tools/PmxPipeline/` | PMX 渲染复刻管线的 Blender / Python 侧：节点图导出、转译器、描边烘焙、双端差分验收。操作参考见该目录的 `README.md` |
 | `Tools/PmxPipeline/hlsl/` | 转译器内联进每个生成着色器的节点求值函数库 |
 | `Tools/PmxPipeline/verify/` | Blender 节点求值语义的逐点核对装置（哈希、噪声、曲线顺序） |
 | `Tools/PmxPipeline/styles/` | **UTS2 兜底路径**的逐模型风格配置，不属于转译路线 |
+| `Tools/PmxPipeline/physics/` | 逐角色物理配置 `<PMX 文件名>.physics.json`，导出与验证装置共用 |
+| `Tools/PmxPipeline/mesh/` | 逐角色网格配置 `<PMX 文件名>.mesh.json`（如头发法线平滑，ADR-0018），导出时读取 |
 | `Assets/PmxTranspileRuntime/` | 转译路线的运行时合成（bloom + 视图变换），alpha 感知 |
+| `Assets/PmxPhysicsRuntime/` | PMX 刚体物理的运行时组件与原生库导入声明（ADR-0017） |
+| `Assets/Plugins/x86_64/` | 原生插件；`MateMmdPhysics.dll` 由 `Tools/MmdPhysicsNative/build.ps1` 生成 |
 | `Assets/Generated/PmxTranspiled/` | 转译出的着色器与材质清单，已忽略；一条命令可重建 |
 | `Packages/com.unity.addressables/` | 本地嵌入的 Addressables 包；运行时路径被 patch 为便携缓存 |
 | `ProjectSettings/` | Unity 项目设置 |
 | `Packages/` | Unity Package Manager 清单 |
+| `Tools/MmdPhysicsNative/` | `MateMmdPhysics.dll` 的源码（Bullet 外的一层 C 接口：自己推进固定步长，运动学刚体按子步时刻插值，输出在前后两个子步之间插值，再按各动态刚体所挂的运动学刚体补上落后的一个子步）、CMake 工程与构建脚本；Bullet 源码由脚本拉到 `bullet3/`（不入库） |
 | `Tools/PortableRuntime/` | Windows 原生入口源码、编译和 exe 资源复制；启动前重定向 Unity 的 LocalLow 与进程临时目录 |
 | `Build/` | 本地构建产物，已忽略不提交 |
 | `Build/Releases/` | 按 `BUILD_MANUAL.md` 的运行文件清单生成的自用 ZIP，排除个人数据与开发产物 |
@@ -90,7 +96,12 @@
 | `Assets/Editor/PmxPipeline/MEModelExportValidation.cs` | 独立导出的 AssetBundle 重载验收：资产格式、网格/形态键、shader 出图与头部方向绑定 |
 | `Assets/Editor/PmxPipeline/PmxPipelineOptions.cs` | PMX 管线路径和参数聚合；优先 CLI，其次 ignored 本机配置 `Library/MateEngineUserData/PmxPipeline/settings.json`，最后项目相对默认输出 |
 | `Assets/Editor/PmxPipeline/PmxMeshBuilder.cs` | PMX 网格、骨架、BlendShape、Humanoid、材质、物理与 prefab 构建 |
-| `Assets/Editor/PmxPipeline/PmxPhysics.cs` | PMX 动态刚体/关节转换为 DynamicBone 链，并按 Humanoid 腿部/髋部骨生成 Skirt 专用 DynamicBoneCollider |
+| `Assets/Editor/PmxPipeline/PmxPhysics.cs` | PMX 动态刚体/关节转换为 DynamicBone：每条链一个组件，关节转动限制沿链累加成刚度曲线，绝对重力；根节锁死时从子骨开始模拟；PMX 静态刚体按分组掩码转成 DynamicBoneCollider，绑定姿态下已嵌入的不挂，头发在 App 待机姿势里已嵌入的不挂。可调量集中在 `PmxPhysicsTuning`（ADR-0016）。导出流程已不用它，只留给验证装置对照 |
+| `Assets/Editor/PmxPipeline/PmxRigidPhysics.cs` | PMX 刚体与关节原样写进 `MmdPhysics`：只搬运坐标与单位（绕 Y 转 180°、局部轴保持 PMX 原样、长度保持 PMX 单位），不换算任何参数；`PmxRigidPhysicsOptions` 里三条有意偏离 MMD 的处理：六轴全锁死的第一节改为跟随骨骼、去掉修剪后只悬挂不驱动骨骼的无骨刚体、偏离绑定位置的平移锁归零；另有按刚体名放宽关节限位、改为跟随骨骼、去掉与某些分组碰撞的逐角色调整；读取 `Tools/PmxPipeline/physics/` 下的逐角色配置（ADR-0017）。导出流程（`PmxMeshBuilder`）调用它 |
+| `Assets/Editor/PmxPipeline/PmxMeshAdjust.cs` | 导出网格的逐角色调整：读取 `Tools/PmxPipeline/mesh/` 下的配置，按材质名对顶点法线做小范围平均，可再按头部的近似椭球混合（ADR-0018）；`PmxMeshBuilder` 在建好网格、合并描边之前调用 |
+| `Assets/Editor/PmxPipeline/MEPhysicsValidation.cs` | 物理验收：同一 `.me` 的包内原物理 / 按 PMX 重建的 DynamicBone / 刚体物理 / 不跑物理多份，用 App 真实动画同步推进，量骨骼偏角、根骨顶点位移、长链下垂、嵌入深度、关节被拉开的距离、静止时的抖动、网格裂开、皮肤从衣服里穿出与物理耗时，出对照图与逐帧并排录像（可放大指定部位、叠加显示刚体、按材质上色），指定骨骼的逐帧偏离可另存 CSV；可按 App 帧率推进、按 App 的 20 段待机轮播；可同时比较多组 `PmxPhysicsTuning` 与 `MmdPhysics` 设置 |
+| `Assets/PmxPhysicsRuntime/MmdPhysics.cs` | 模型根节点上的刚体物理组件：保存 PMX 刚体与关节，运行时建 Bullet 世界；执行顺序 10000，在动画与鼠标跟随 IK 之后让模式 0 刚体跟随骨骼、步进、把模式 1/2 刚体写回骨骼；物理骨骼每帧先还原局部姿态；根节点瞬移或缩放变化时重置；可选新式/旧式阻尼公式；默认转向写回（只写旋转并把父骨转向子骨在物理里的位置，避免 Bullet 约束弹性把衣物拉长）、求解迭代 10 次（Bullet 默认，与 MMD 相同）；关节限位纠正强度可按子刚体名分两档（衣物与头发不同软硬）；动态刚体输出时按沿关节连到的最近一个运动学刚体补上落后的一个子步（`followAnchors`） |
+| `Assets/PmxPhysicsRuntime/MmdPhysicsNative.cs` | `MateMmdPhysics.dll` 的 P/Invoke 声明 |
 | `Assets/Editor/PmxPipeline/PmxRenderPreset.cs` | Blender 渲染预设 JSON DTO 与材质匹配逻辑 |
 | `Assets/Editor/PmxPipeline/PmxMaterialMapper.cs` | PMX 材质与 Blender preset 参数到 UTS2 材质的映射；贴图材质保留 PMX 贴图原色，只接受有效 preset 颜色，并使用保守的软 toon 阴影、rim 与轮廓参数；matcap/highColor 默认关闭；消费 `PmxStyleConfig` 的逐模型风格覆盖。**注：2026-06-22 试过在此恢复高光/硬卡通追 HoYo，失败已回退，勿重试，见 ADR-0010 失败路线** |
 | `Assets/Editor/PmxPipeline/PmxStyleConfig.cs` | 逐模型风格配置（JSON）DTO 与加载器；把材质风格调参从 C# 解耦到数据。Shader 无关旋钮：`materialProfile`、`skinWarmth`、`brightness`、`outlineScale`、`rimStrength`，及逐材质 `baseColor`/`shadeColor`/`outline` 覆盖 |
@@ -110,7 +121,7 @@
 | `Assets/MATE ENGINE - Scripts/Startup/LoadingScreenController.cs` | 项目内加载页 UI 和主场景异步加载 |
 | `Assets/MATE ENGINE - Scripts/Portable/PortablePaths.cs` | 统一管理运行时数据目录 |
 | `Assets/MATE ENGINE - Scripts/Portable/PortableMigration.cs` | 首次启动迁移旧数据 |
-| `Assets/MATE ENGINE - Scripts/Settings/SaveLoadHandler.cs` | 设置 JSON 读写 |
+| `Assets/MATE ENGINE - Scripts/Settings/SaveLoadHandler.cs` | 设置 JSON 读写；启动时按设置里的窗口大小档位恢复窗口（等 `UniWindowController` 接管窗口后），档位尺寸也供「窗口大小」按钮使用 |
 | `Assets/MATE ENGINE - Scripts/Settings/LanguageDropdownHandler.cs` | 语言下拉同步与 `selectedLocaleCode` 持久化 |
 | `Assets/MATE ENGINE - Scripts/Settings/RenderStyleDropdownHandler.cs` | 渲染风格下拉：从 `RenderStyleManager` 填充选项，绑 `SettingsData.renderStyle`，切换调 `RenderStyleManager.SetStyle` |
 | `Assets/Editor/RenderStyleSceneSetup.cs` | 编辑器命令（菜单 `MateEngine ▸ Render Style ▸ Add Settings Dropdown` 或 `-executeMethod RenderStyleSceneSetup.AddDropdownBatch`）：克隆设置菜单 Graphics 下拉生成渲染风格下拉并接线，幂等可逆 |
@@ -163,6 +174,9 @@ Build 产物优先使用 `{exeDir}/UserData/`。Editor 和命令行构建进程�
 - `--datadir`、`--savefile` 和 RAG 存档路径被归一化到 `UserData/` 子路径内。
 - `DiscordManager.registerUriScheme` 默认关闭；当前主场景使用 `DiscordPresence`，不涉及 URI scheme 注册。
 - Unity 编辑器自身可能写入全局缓存和原生 LocalLow 目录；Player 的原生入口仅作用于发行版运行进程，不修改编辑器或全局设置。
+- Unity Player 自己会在退出时把窗口分辨率、位置、所在显示器等写进注册表 `HKCU\Software\Shinymoon\MateEngineX`（PlayerPrefs），
+  启动时再读回；这一项与原版 Mate Engine 共用（公司名、产品名相同）。启动时窗口大小已改为按设置恢复，不再受它影响；
+  首个加载场景仍按它记的尺寸显示，进入主场景后才恢复。
 
 ## Mod 系统
 
@@ -187,7 +201,7 @@ Editor-only 的预处理流程：把 PMX 模型、MMD 物理和配套 `.blend` �
 
 | 段 | 做什么 | 状态 |
 |---|---|---|
-| 几何与物理 | 解析 PMX → 网格/骨架/BlendShape → Humanoid Avatar → MMD 刚体关节转 DynamicBone → `.me` | 已可用，三次材质路线更替都没动它 |
+| 几何与物理 | 解析 PMX → 网格/骨架/BlendShape → Humanoid Avatar → PMX 刚体与关节原样写进 `MmdPhysics`（运行时 Bullet 模拟）→ `.me` | 已可用，三次材质路线更替都没动它；物理见 ADR-0017（之前的 DynamicBone 近似见 ADR-0016） |
 | 材质 | 渲染预设 → 材质 | **主线是节点图转译**；UTS2 映射作为兜底保留 |
 
 ### 材质：节点图转译（主线）
@@ -253,6 +267,7 @@ ADR-0010/0011），保留为旧 `.me` 兼容与出图兜底。
 | `Tools/PmxPipeline/export_model.ps1` | PMX + Blend 独立导出 `.me`；操作与产物路径见工具 README |
 | `MateEngine.PmxPipeline.MEPmxPipeline.BuildTranspiledAndExport` | 显式参数的转译资产构建、bundle 重载验证与导出 |
 | `Tools/PmxPipeline/run_ref_diff.ps1` | 渲染复刻的完整闭环：导出节点图 → 烘描边 → 转译 → 双端渲染 → 差分 |
+| `MateEngine.PmxPipeline.MEPhysicsValidation.Run` | 用 App 动画复现并对比 `.me` 的物理效果；命令见工具 README |
 | `MateEngine.PmxPipeline.MEPmxPipeline.BuildModel` | 由 PMX 构建 prefab |
 | `MateEngine.PmxPipeline.MEPmxPipeline.BuildAndExport` | 构建并打包 `.me` |
 | `MateEngine.PmxPipeline.MEPmxPipeline.ExportMe` | 只重新打包 `.me` |
